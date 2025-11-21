@@ -1,0 +1,27 @@
+[Unit]
+Description=Hermit Crab Daemon - 持续监控模式
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/hermit_crab
+ExecStart=/usr/bin/python3 /opt/hermit_crab/agent.py daemon
+
+# 自动重启配置
+Restart=always
+RestartSec=60
+
+# 环境变量
+# Environment="HERMIT_GITHUB_TOKEN=your_token"
+# Environment="HERMIT_CF_TOKEN=your_token"
+
+# 日志配置
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hermit-crab-daemon
+
+[Install]
+WantedBy=multi-user.target
+

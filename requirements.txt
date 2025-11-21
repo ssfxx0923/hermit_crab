@@ -1,0 +1,26 @@
+# Hermit Crab Dependencies
+
+# YAML configuration
+PyYAML>=6.0
+
+# GitHub API
+PyGithub>=2.1.1
+
+# HTTP requests
+requests>=2.31.0
+
+# CloudFlare API (optional, can use requests)
+cloudflare>=2.11.0
+
+# SSH and system operations
+paramiko>=3.4.0
+
+# Date/Time handling
+python-dateutil>=2.8.2
+
+# Logging
+colorlog>=6.7.0
+
+# System monitoring
+psutil>=5.9.0
+

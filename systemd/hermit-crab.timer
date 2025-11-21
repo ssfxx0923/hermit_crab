@@ -1,0 +1,15 @@
+[Unit]
+Description=Hermit Crab 定时检查
+Requires=hermit-crab.service
+
+[Timer]
+# 每小时执行一次
+OnCalendar=hourly
+# 首次启动后1分钟执行
+OnBootSec=1min
+# 如果错过了执行时间，立即执行
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+

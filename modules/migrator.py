@@ -1,0 +1,361 @@
+"""
+迁移模块
+负责执行整机克隆和数据传输
+"""
+
+import os
+import time
+import subprocess
+from typing import Dict, List, Optional
+from .utils import Logger, run_command, check_command_exists, install_package
+
+
+class Migrator:
+    """服务器迁移执行器"""
+    
+    def __init__(self, config: Dict):
+        """
+        初始化迁移器
+        
+        Args:
+            config: 配置字典
+        """
+        self.config = config
+        self.logger = Logger().get_logger()
+        self.ssh_user = config['security']['ssh_user']
+        self.ssh_key = config['security']['ssh_key_path']
+        
+        # 检查必要工具
+        self._check_dependencies()
+    
+    def _check_dependencies(self):
+        """检查并安装必要的依赖"""
+        required_tools = ['rsync', 'ssh', 'sshpass', 'tar']
+        
+        for tool in required_tools:
+            if not check_command_exists(tool):
+                self.logger.warning(f"{tool} 未安装，尝试安装...")
+                if not install_package(tool):
+                    raise RuntimeError(f"无法安装必要工具: {tool}")
+    
+    def test_ssh_connection(self, target_ip: str, password: Optional[str] = None) -> bool:
+        """
+        测试SSH连接
+        
+        Args:
+            target_ip: 目标服务器IP
+            password: SSH密码（如果使用密码认证）
+            
+        Returns:
+            连接是否成功
+        """
+        self.logger.info(f"测试SSH连接: {target_ip}")
+        
+        if password:
+            cmd = f"sshpass -p '{password}' ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 {self.ssh_user}@{target_ip} 'echo SUCCESS'"
+        else:
+            cmd = f"ssh -i {self.ssh_key} -o StrictHostKeyChecking=no -o ConnectTimeout=10 {self.ssh_user}@{target_ip} 'echo SUCCESS'"
+        
+        returncode, stdout, stderr = run_command(cmd, timeout=30)
+        
+        if returncode == 0 and 'SUCCESS' in stdout:
+            self.logger.info("SSH连接测试成功")
+            return True
+        else:
+            self.logger.error(f"SSH连接失败: {stderr}")
+            return False
+    
+    def setup_ssh_key(self, target_ip: str, password: str) -> bool:
+        """
+        设置SSH密钥免密登录
+        
+        Args:
+            target_ip: 目标服务器IP
+            password: SSH密码
+            
+        Returns:
+            是否成功
+        """
+        self.logger.info(f"配置SSH密钥到 {target_ip}")
+        
+        # 确保本地密钥存在
+        if not os.path.exists(self.ssh_key):
+            self.logger.info("生成SSH密钥对...")
+            os.makedirs(os.path.dirname(self.ssh_key), exist_ok=True)
+            cmd = f"ssh-keygen -t rsa -b 4096 -f {self.ssh_key} -N ''"
+            returncode, _, stderr = run_command(cmd)
+            
+            if returncode != 0:
+                self.logger.error(f"生成SSH密钥失败: {stderr}")
+                return False
+        
+        # 复制公钥到目标服务器
+        pub_key = f"{self.ssh_key}.pub"
+        if not os.path.exists(pub_key):
+            self.logger.error(f"公钥文件不存在: {pub_key}")
+            return False
+        
+        cmd = f"sshpass -p '{password}' ssh-copy-id -i {pub_key} -o StrictHostKeyChecking=no {self.ssh_user}@{target_ip}"
+        returncode, stdout, stderr = run_command(cmd, timeout=60)
+        
+        if returncode == 0:
+            self.logger.info("SSH密钥配置成功")
+            return True
+        else:
+            self.logger.error(f"SSH密钥配置失败: {stderr}")
+            return False
+    
+    def execute_remote_command(self, target_ip: str, command: str, 
+                               use_password: bool = False, 
+                               password: Optional[str] = None) -> tuple:
+        """
+        在远程服务器执行命令
+        
+        Args:
+            target_ip: 目标服务器IP
+            command: 要执行的命令
+            use_password: 是否使用密码
+            password: SSH密码
+            
+        Returns:
+            (returncode, stdout, stderr)
+        """
+        if use_password and password:
+            cmd = f"sshpass -p '{password}' ssh -o StrictHostKeyChecking=no {self.ssh_user}@{target_ip} '{command}'"
+        else:
+            cmd = f"ssh -i {self.ssh_key} -o StrictHostKeyChecking=no {self.ssh_user}@{target_ip} '{command}'"
+        
+        return run_command(cmd, timeout=300)
+    
+    def rsync_system_files(self, target_ip: str) -> bool:
+        """
+        使用Rsync同步系统文件
+        
+        Args:
+            target_ip: 目标服务器IP
+            
+        Returns:
+            是否成功
+        """
+        self.logger.info("=" * 60)
+        self.logger.info("开始Rsync系统文件同步...")
+        self.logger.info("=" * 60)
+        
+        exclude_file = self.config['rsync']['exclude_file']
+        extra_args = self.config['rsync']['extra_args']
+        bandwidth_limit = self.config['rsync']['bandwidth_limit']
+        
+        # 构建rsync命令
+        cmd_parts = [
+            'rsync',
+            extra_args,
+            f'--exclude-from={exclude_file}'
+        ]
+        
+        # 添加带宽限制
+        if bandwidth_limit > 0:
+            cmd_parts.append(f'--bwlimit={bandwidth_limit}')
+        
+        # 使用SSH密钥
+        cmd_parts.append(f'-e "ssh -i {self.ssh_key} -o StrictHostKeyChecking=no"')
+        
+        # 源和目标
+        cmd_parts.append('/')
+        cmd_parts.append(f'{self.ssh_user}@{target_ip}:/')
+        
+        cmd = ' '.join(cmd_parts)
+        
+        self.logger.info(f"执行命令: {cmd}")
+        
+        # 执行rsync
+        start_time = time.time()
+        
+        try:
+            process = subprocess.Popen(
+                cmd,
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True
+            )
+            
+            # 实时输出
+            for line in process.stdout:
+                line = line.strip()
+                if line:
+                    self.logger.debug(line)
+            
+            process.wait()
+            
+            elapsed = time.time() - start_time
+            
+            if process.returncode == 0:
+                self.logger.info(f"✅ Rsync同步完成 (耗时: {elapsed:.2f}秒)")
+                return True
+            else:
+                self.logger.error(f"❌ Rsync同步失败 (返回码: {process.returncode})")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"Rsync执行异常: {e}")
+            return False
+    
+    def tar_stream_transfer(self, target_ip: str, directories: List[str]) -> bool:
+        """
+        使用Tar Stream传输大目录
+        
+        Args:
+            target_ip: 目标服务器IP
+            directories: 要传输的目录列表
+            
+        Returns:
+            是否成功
+        """
+        self.logger.info("=" * 60)
+        self.logger.info("开始Tar Stream传输...")
+        self.logger.info("=" * 60)
+        
+        for directory in directories:
+            if not os.path.exists(directory):
+                self.logger.warning(f"目录不存在，跳过: {directory}")
+                continue
+            
+            self.logger.info(f"传输目录: {directory}")
+            
+            # 构建tar stream命令
+            cmd = (
+                f"tar -czf - {directory} | "
+                f"ssh -i {self.ssh_key} -o StrictHostKeyChecking=no "
+                f"{self.ssh_user}@{target_ip} 'cd / && tar -xzf -'"
+            )
+            
+            start_time = time.time()
+            returncode, stdout, stderr = run_command(cmd, timeout=7200)
+            elapsed = time.time() - start_time
+            
+            if returncode == 0:
+                self.logger.info(f"✅ {directory} 传输完成 (耗时: {elapsed:.2f}秒)")
+            else:
+                self.logger.error(f"❌ {directory} 传输失败: {stderr}")
+                return False
+        
+        self.logger.info("Tar Stream传输全部完成")
+        return True
+    
+    def backup_critical_files(self, target_ip: str) -> bool:
+        """
+        在目标服务器备份关键文件
+        
+        Args:
+            target_ip: 目标服务器IP
+            
+        Returns:
+            是否成功
+        """
+        self.logger.info("在目标服务器备份关键文件...")
+        
+        backup_commands = [
+            "mkdir -p /root/backup_before_migration",
+            "cp -a /etc/fstab /root/backup_before_migration/ 2>/dev/null || true",
+            "cp -a /etc/netplan /root/backup_before_migration/ 2>/dev/null || true",
+            "cp -a /etc/hostname /root/backup_before_migration/ 2>/dev/null || true",
+            "cp -a /etc/hosts /root/backup_before_migration/ 2>/dev/null || true",
+        ]
+        
+        for cmd in backup_commands:
+            returncode, _, stderr = self.execute_remote_command(target_ip, cmd)
+            if returncode != 0:
+                self.logger.warning(f"备份命令执行警告: {stderr}")
+        
+        self.logger.info("关键文件备份完成")
+        return True
+    
+    def restore_network_config(self, target_ip: str) -> bool:
+        """
+        恢复目标服务器的网络配置
+        
+        Args:
+            target_ip: 目标服务器IP
+            
+        Returns:
+            是否成功
+        """
+        self.logger.info("恢复目标服务器网络配置...")
+        
+        restore_commands = [
+            "cp -a /root/backup_before_migration/netplan/* /etc/netplan/ 2>/dev/null || true",
+            "cp -a /root/backup_before_migration/hostname /etc/hostname 2>/dev/null || true",
+            "cp -a /root/backup_before_migration/hosts /etc/hosts 2>/dev/null || true",
+            "netplan apply 2>/dev/null || true"
+        ]
+        
+        for cmd in restore_commands:
+            returncode, _, stderr = self.execute_remote_command(target_ip, cmd)
+            if returncode != 0:
+                self.logger.warning(f"恢复命令执行警告: {stderr}")
+        
+        self.logger.info("网络配置恢复完成")
+        return True
+    
+    def perform_migration(self, target_ip: str, password: Optional[str] = None) -> bool:
+        """
+        执行完整迁移流程
+        
+        Args:
+            target_ip: 目标服务器IP
+            password: SSH密码（首次连接需要）
+            
+        Returns:
+            是否成功
+        """
+        self.logger.info("=" * 60)
+        self.logger.info(f"开始迁移到目标服务器: {target_ip}")
+        self.logger.info("=" * 60)
+        
+        try:
+            # 1. 测试SSH连接
+            if password:
+                if not self.test_ssh_connection(target_ip, password):
+                    self.logger.error("SSH连接测试失败")
+                    return False
+                
+                # 2. 设置SSH密钥
+                if not self.setup_ssh_key(target_ip, password):
+                    self.logger.error("SSH密钥设置失败")
+                    return False
+            else:
+                if not self.test_ssh_connection(target_ip):
+                    self.logger.error("SSH连接测试失败（使用密钥）")
+                    return False
+            
+            # 3. 备份目标服务器关键文件
+            if not self.backup_critical_files(target_ip):
+                self.logger.error("备份关键文件失败")
+                return False
+            
+            # 4. 执行Rsync系统同步
+            if not self.rsync_system_files(target_ip):
+                self.logger.error("Rsync系统同步失败")
+                return False
+            
+            # 5. 恢复网络配置
+            if not self.restore_network_config(target_ip):
+                self.logger.error("恢复网络配置失败")
+                return False
+            
+            # 6. Tar Stream传输大目录
+            tar_dirs = self.config['migration'].get('tar_stream_dirs', [])
+            if tar_dirs:
+                if not self.tar_stream_transfer(target_ip, tar_dirs):
+                    self.logger.warning("Tar Stream传输部分失败，但继续...")
+            
+            self.logger.info("=" * 60)
+            self.logger.info("✅ 迁移完成！")
+            self.logger.info("=" * 60)
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"迁移过程中发生异常: {e}")
+            return False
+
