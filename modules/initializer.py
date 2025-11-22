@@ -5,8 +5,8 @@
 
 import os
 import time
-from typing import Dict, Optional
-from .utils import Logger, format_date, format_datetime
+from typing import Dict
+from .utils import Logger, format_datetime
 
 
 class Initializer:
@@ -26,67 +26,68 @@ class Initializer:
     def sync_config_to_target(self, target_ip: str, migrator) -> bool:
         """
         同步配置文件到目标服务器
-        
+
         Args:
             target_ip: 目标服务器IP
             migrator: Migrator实例（用于执行远程命令）
-            
+
         Returns:
             是否成功
         """
         self.logger.info("同步配置文件到目标服务器...")
-        
-        # 配置文件列表
+
+        # 配置文件列表（.env 和 nodes.json 已通过 rsync 复制，这里只确认）
         config_files = [
-            f"{self.install_path}/config.yaml",
+            f"{self.install_path}/.env",
             f"{self.install_path}/data/nodes.json"
         ]
-        
+
         for config_file in config_files:
             if not os.path.exists(config_file):
                 self.logger.warning(f"配置文件不存在: {config_file}")
                 continue
-            
-            # 使用scp传输
+
+            # 使用scp传输（确保最新版本）
             cmd = (
                 f"scp -i {migrator.ssh_key} -o StrictHostKeyChecking=no "
                 f"{config_file} {migrator.ssh_user}@{target_ip}:{config_file}"
             )
-            
-            returncode, _, stderr = migrator.run_command(cmd, timeout=60)
-            
-            if returncode == 0:
+
+            import subprocess
+            result = subprocess.run(
+                cmd,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=60
+            )
+
+            if result.returncode == 0:
                 self.logger.info(f"✅ 已同步: {config_file}")
             else:
-                self.logger.error(f"❌ 同步失败: {config_file}, 错误: {stderr}")
+                self.logger.error(f"❌ 同步失败: {config_file}, 错误: {result.stderr}")
                 return False
-        
+
         return True
     
-    def update_lifecycle_on_target(self, target_ip: str, target_server: Dict, migrator) -> bool:
+    def update_lifecycle_on_target(self, target_ip: str, migrator) -> bool:
         """
         更新目标服务器的生命周期信息
-        
+
         Args:
             target_ip: 目标服务器IP
-            target_server: 目标服务器信息
             migrator: Migrator实例
-            
+
         Returns:
             是否成功
         """
         self.logger.info("更新目标服务器生命周期信息...")
-        
-        # 创建初始化命令
-        cmd = (
-            f"cd {self.install_path} && "
-            f"python3 agent.py init "
-            f"--added-date {target_server['added_date']} "
-            f"--domain {target_server['domain']}"
-        )
-        
-        returncode, stdout, stderr = migrator.execute_remote_command(target_ip, cmd)
-        
+
+        # 创建初始化命令（系统自动记录时间）
+        cmd = f"cd {self.install_path} && python3 agent.py init"
+
+        returncode, _, stderr = migrator.execute_remote_command(target_ip, cmd)
+
         if returncode == 0:
             self.logger.info("✅ 生命周期信息已更新")
             return True
@@ -118,8 +119,8 @@ class Initializer:
         ]
         
         for cmd in commands:
-            returncode, stdout, stderr = migrator.execute_remote_command(target_ip, cmd)
-            
+            returncode, _, stderr = migrator.execute_remote_command(target_ip, cmd)
+
             if returncode != 0:
                 self.logger.warning(f"命令执行警告: {cmd}, 错误: {stderr}")
         
@@ -139,10 +140,14 @@ class Initializer:
         """
         self.logger.info("创建迁移标记文件...")
         
+        # 获取当前服务器IP
+        from .utils import get_current_ip
+        source_ip = get_current_ip()
+        
         flag_content = f"""{{
     "migrated": true,
     "migration_time": "{format_datetime()}",
-    "source_ip": "{migrator.config['base'].get('current_domain', 'unknown')}",
+    "source_ip": "{source_ip}",
     "target_ip": "{target_ip}"
 }}"""
         
@@ -157,29 +162,56 @@ class Initializer:
             self.logger.error(f"❌ 创建迁移标记失败: {stderr}")
             return False
     
-    def reboot_target_server(self, target_ip: str, migrator) -> bool:
+    def cleanup_python_cache(self, target_ip: str, migrator) -> bool:
         """
-        重启目标服务器
-        
+        清理 Python 字节码缓存（避免跨机器兼容性问题）
+
         Args:
             target_ip: 目标服务器IP
             migrator: Migrator实例
-            
+
+        Returns:
+            是否成功
+        """
+        self.logger.info("清理 Python 字节码缓存...")
+
+        cleanup_commands = [
+            "find /usr -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true",
+            "find /usr/local -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true",
+            "find /root -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true",
+            "find /home -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true",
+        ]
+
+        for cmd in cleanup_commands:
+            self.logger.debug(f"执行: {cmd}")
+            migrator.execute_remote_command(target_ip, cmd)
+
+        self.logger.info("✅ Python 缓存清理完成")
+        return True
+
+    def reboot_target_server(self, target_ip: str, migrator) -> bool:
+        """
+        重启目标服务器
+
+        Args:
+            target_ip: 目标服务器IP
+            migrator: Migrator实例
+
         Returns:
             是否成功
         """
         self.logger.info("准备重启目标服务器...")
-        
+
         # 检查调试模式
         if self.config.get('debug', {}).get('skip_reboot', False):
             self.logger.warning("⚠️  调试模式：跳过重启")
             return True
-        
+
         # 发送重启命令
         cmd = "nohup sh -c 'sleep 2 && reboot' >/dev/null 2>&1 &"
-        
+
         returncode, _, stderr = migrator.execute_remote_command(target_ip, cmd)
-        
+
         if returncode == 0:
             self.logger.info("✅ 重启命令已发送")
             self.logger.info("⏳ 等待服务器重启...")
@@ -239,8 +271,8 @@ class Initializer:
         
         all_ok = True
         for name, cmd in check_commands:
-            returncode, stdout, stderr = migrator.execute_remote_command(target_ip, cmd)
-            
+            returncode, stdout, _ = migrator.execute_remote_command(target_ip, cmd)
+
             if returncode == 0 and 'active' in stdout:
                 self.logger.info(f"✅ {name}: 运行中")
             else:
@@ -269,30 +301,34 @@ class Initializer:
             # 1. 同步配置文件
             if not self.sync_config_to_target(target_ip, migrator):
                 return False
-            
-            # 2. 更新生命周期
-            if not self.update_lifecycle_on_target(target_ip, target_server, migrator):
+
+            # 2. 清理 Python 字节码缓存（跨机器可能不兼容）
+            if not self.cleanup_python_cache(target_ip, migrator):
                 return False
-            
-            # 3. 配置systemd服务
+
+            # 3. 更新生命周期
+            if not self.update_lifecycle_on_target(target_ip, migrator):
+                return False
+
+            # 4. 配置systemd服务
             if not self.setup_systemd_service_on_target(target_ip, migrator):
                 return False
-            
-            # 4. 创建迁移标记
+
+            # 5. 创建迁移标记
             if not self.create_migration_flag(target_ip, migrator):
                 return False
-            
-            # 5. 重启目标服务器
+
+            # 6. 重启目标服务器
             if not self.reboot_target_server(target_ip, migrator):
                 return False
-            
-            # 6. 等待服务器上线
+
+            # 7. 等待服务器上线
             startup_wait = self.config['feedback']['startup_wait']
             if not self.wait_for_target_online(target_ip, migrator, max_wait=startup_wait):
                 self.logger.warning("⚠️  服务器重启超时，可能需要手动检查")
                 return False
-            
-            # 7. 验证服务状态
+
+            # 8. 验证服务状态
             self.verify_services_on_target(target_ip, migrator)
             
             self.logger.info("=" * 60)

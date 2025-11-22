@@ -46,11 +46,11 @@ rm -rf /var/tmp/* 2>/dev/null || true
 
 # 4. 确保重要目录存在
 echo "确保重要目录存在..."
-mkdir -p /opt/hermit_crab/{config,data,logs,scripts}
+mkdir -p ${HERMIT_INSTALL_PATH:-/root/hermit_crab}/{config,data,logs,scripts}
 
 # 5. 生成迁移元数据
 echo "生成迁移元数据..."
-cat > /opt/hermit_crab/data/migration_meta.json <<EOF
+cat > ${HERMIT_INSTALL_PATH:-/root/hermit_crab}/data/migration_meta.json <<EOF
 {
     "migration_start": "$(date -Iseconds)",
     "source_ip": "$(curl -s ifconfig.me || hostname -I | awk '{print $1}')",

@@ -12,7 +12,7 @@ from .migrator import Migrator
 from .initializer import Initializer
 from .github_sync import GitHubSync
 from .cloudflare_api import CloudFlareAPI
-from .utils import Logger, load_config, get_current_ip
+from .utils import Logger, get_config, get_current_ip, load_env, get_ssh_password
 
 __all__ = [
     'Monitor',
@@ -22,7 +22,9 @@ __all__ = [
     'GitHubSync',
     'CloudFlareAPI',
     'Logger',
-    'load_config',
-    'get_current_ip'
+    'get_config',
+    'get_current_ip',
+    'load_env',
+    'get_ssh_password'
 ]
 

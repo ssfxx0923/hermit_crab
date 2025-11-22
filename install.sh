@@ -17,7 +17,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # 安装路径
-INSTALL_PATH="/opt/hermit_crab"
+INSTALL_PATH="/root/hermit_crab"
 CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "当前目录: $CURRENT_DIR"
@@ -122,10 +122,11 @@ echo "========================================"
 echo ""
 echo "后续步骤:"
 echo ""
-echo "1. 配置环境变量 (可选，如果使用GitHub和CloudFlare):"
-echo "   export HERMIT_GITHUB_TOKEN='your_github_token'"
-echo "   export HERMIT_CF_TOKEN='your_cloudflare_token'"
-echo "   # 建议添加到 /etc/environment 或 ~/.bashrc"
+echo "1. 配置环境变量:"
+echo "   cd $INSTALL_PATH"
+echo "   cp env.example .env"
+echo "   nano .env"
+echo "   # 填入 GitHub Token, CloudFlare Token 和 SSH 密码"
 echo ""
 echo "2. 编辑配置文件:"
 echo "   nano $INSTALL_PATH/config.yaml"

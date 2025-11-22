@@ -1,7 +1,7 @@
 # Hermit Crab Dependencies
 
-# YAML configuration
-PyYAML>=6.0
+# Environment variables
+python-dotenv>=1.0.0
 
 # GitHub API
 PyGithub>=2.1.1

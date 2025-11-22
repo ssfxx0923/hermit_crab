@@ -12,7 +12,7 @@ EXIT_CODE=0
 
 # 1. 检查配置文件
 echo -n "检查配置文件... "
-if [ -f "/opt/hermit_crab/config.yaml" ]; then
+if [ -f "${HERMIT_INSTALL_PATH:-/root/hermit_crab}/config.yaml" ]; then
     echo "✅"
 else
     echo "❌ 配置文件不存在"
@@ -52,12 +52,12 @@ fi
 
 # 5. 检查生命周期
 echo -n "检查生命周期初始化... "
-if [ -f "/opt/hermit_crab/data/lifecycle.json" ]; then
+if [ -f "${HERMIT_INSTALL_PATH:-/root/hermit_crab}/data/lifecycle.json" ]; then
     echo "✅"
     
     # 显示剩余天数
     if command -v jq &>/dev/null; then
-        EXPIRE_DATE=$(jq -r '.expire_date' /opt/hermit_crab/data/lifecycle.json)
+        EXPIRE_DATE=$(jq -r '.expire_date' ${HERMIT_INSTALL_PATH:-/root/hermit_crab}/data/lifecycle.json)
         CURRENT_DATE=$(date +%Y-%m-%d)
         
         if command -v python3 &>/dev/null; then

@@ -12,8 +12,8 @@ echo "========================================"
 
 # 1. 修复文件权限
 echo "修复文件权限..."
-chmod +x /opt/hermit_crab/agent.py 2>/dev/null || true
-chmod +x /opt/hermit_crab/scripts/*.sh 2>/dev/null || true
+chmod +x ${HERMIT_INSTALL_PATH:-/root/hermit_crab}/agent.py 2>/dev/null || true
+chmod +x ${HERMIT_INSTALL_PATH:-/root/hermit_crab}/scripts/*.sh 2>/dev/null || true
 
 # 2. 恢复关键配置文件
 echo "恢复关键配置文件..."
@@ -62,19 +62,19 @@ systemctl enable hermit-crab.timer 2>/dev/null || true
 
 # 7. 清理旧的日志
 echo "清理旧日志..."
-truncate -s 0 /opt/hermit_crab/logs/hermit_crab.log 2>/dev/null || true
+truncate -s 0 ${HERMIT_INSTALL_PATH:-/root/hermit_crab}/logs/hermit_crab.log 2>/dev/null || true
 
 # 8. 更新迁移元数据
-if [ -f "/opt/hermit_crab/data/migration_meta.json" ]; then
+if [ -f "${HERMIT_INSTALL_PATH:-/root/hermit_crab}/data/migration_meta.json" ]; then
     echo "更新迁移元数据..."
     
     # 添加完成时间
     TEMP_FILE=$(mktemp)
     jq '. + {"migration_complete": "'$(date -Iseconds)'"}' \
-        /opt/hermit_crab/data/migration_meta.json > "$TEMP_FILE" 2>/dev/null || true
+        ${HERMIT_INSTALL_PATH:-/root/hermit_crab}/data/migration_meta.json > "$TEMP_FILE" 2>/dev/null || true
     
     if [ -f "$TEMP_FILE" ]; then
-        mv "$TEMP_FILE" /opt/hermit_crab/data/migration_meta.json
+        mv "$TEMP_FILE" ${HERMIT_INSTALL_PATH:-/root/hermit_crab}/data/migration_meta.json
     fi
 fi
 

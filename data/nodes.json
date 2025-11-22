@@ -1,27 +1,15 @@
 {
   "version": "1.0",
-  "last_updated": "2025-11-21T00:00:00Z",
+  "last_updated": "2025-11-22T03:41:41Z",
   "servers": [
     {
-      "id": "server-001",
-      "ip": "192.168.1.10",
-      "domain": "server-1.ssfxx.com",
-      "added_date": "2025-11-06",
-      "expire_date": "2025-11-21",
+      "ip": "104.248.191.16",
+      "added_date": "2025-11-21",
       "status": "active",
-      "last_heartbeat": "2025-11-21T00:00:00Z",
-      "notes": "Initial server"
-    },
-    {
-      "id": "server-002",
-      "ip": "192.168.1.11",
-      "domain": "server-2.ssfxx.com",
-      "added_date": "2025-11-15",
-      "expire_date": "2025-11-30",
-      "status": "idle",
-      "last_heartbeat": null,
-      "notes": "Backup server"
+      "last_heartbeat": "2025-11-21T15:51:53Z",
+      "notes": "",
+      "lock_holder": "170.64.226.135",
+      "lock_time": "2025-11-21T15:43:46Z"
     }
   ]
 }
-

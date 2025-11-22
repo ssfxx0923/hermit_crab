@@ -87,16 +87,17 @@ class Scanner:
             
             # 检查是否过期
             try:
-                remaining = calculate_days_remaining(server['expire_date'])
+                total_days = self.config['lifecycle']['total_days']
+                remaining = calculate_days_remaining(server['added_date'], total_days)
                 if remaining < 0:
-                    self.logger.warning(f"服务器 {server.get('domain')} 已过期")
+                    self.logger.warning(f"服务器 {server['ip']} 已过期")
                     continue
                 
                 # 添加剩余天数信息
                 server['remaining_days'] = remaining
                 available.append(server)
             except Exception as e:
-                self.logger.error(f"处理服务器 {server.get('id')} 时出错: {e}")
+                self.logger.error(f"处理服务器 {server.get('ip')} 时出错: {e}")
                 continue
         
         return available
@@ -133,7 +134,7 @@ class Scanner:
             # 选择时间最长的
             target = max(candidates_high, key=lambda x: x['remaining_days'])
             self.logger.info(
-                f"选择高优先级服务器: {target.get('domain')} "
+                f"选择高优先级服务器: {target['ip']} "
                 f"(剩余 {target['remaining_days']} 天)"
             )
             return target
@@ -147,7 +148,7 @@ class Scanner:
         if candidates_low:
             target = max(candidates_low, key=lambda x: x['remaining_days'])
             self.logger.info(
-                f"选择低优先级服务器: {target.get('domain')} "
+                f"选择低优先级服务器: {target['ip']} "
                 f"(剩余 {target['remaining_days']} 天)"
             )
             return target
@@ -158,13 +159,36 @@ class Scanner:
             f"(当前剩余 {current_remaining_days} 天)"
         )
         return None
-    
-    def update_server_status(self, server_id: str, status: str, **kwargs):
+
+    def select_longest_remaining_server(self) -> Optional[Dict]:
+        """
+        选择剩余时间最长的服务器（用于强制迁移）
+
+        Returns:
+            剩余时间最长的服务器信息，如果没有可用服务器返回None
+        """
+        available = self.get_available_servers()
+
+        if not available:
+            self.logger.error("没有可用的服务器")
+            return None
+
+        self.logger.info(f"找到 {len(available)} 个可用服务器")
+
+        # 选择剩余时间最长的
+        target = max(available, key=lambda x: x['remaining_days'])
+        self.logger.info(
+            f"✅ 选择剩余时间最长的服务器: {target['ip']} "
+            f"(剩余 {target['remaining_days']} 天)"
+        )
+        return target
+
+    def update_server_status(self, ip: str, status: str, **kwargs):
         """
         更新服务器状态
         
         Args:
-            server_id: 服务器ID
+            ip: 服务器IP地址
             status: 新状态
             **kwargs: 其他要更新的字段
         """
@@ -173,7 +197,7 @@ class Scanner:
         
         updated = False
         for server in servers:
-            if server.get('id') == server_id or server.get('domain') == server_id:
+            if server.get('ip') == ip:
                 server['status'] = status
                 server['last_heartbeat'] = datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ")
                 
@@ -182,102 +206,118 @@ class Scanner:
                     server[key] = value
                 
                 updated = True
-                self.logger.info(f"服务器 {server_id} 状态已更新为: {status}")
+                self.logger.info(f"服务器 {ip} 状态已更新为: {status}")
                 break
         
         if not updated:
-            self.logger.warning(f"未找到服务器: {server_id}")
+            self.logger.warning(f"未找到服务器: {ip}")
             return
         
         self.save_nodes(nodes_data)
     
-    def add_server(self, ip: str, domain: str, added_date: str, expire_date: str, 
-                   status: str = "idle", **kwargs) -> bool:
+    def add_server(self, ip: str, status: str = "idle", notes: str = "") -> bool:
         """
         添加新服务器
         
         Args:
             ip: IP地址
-            domain: 域名
-            added_date: 添加日期
-            expire_date: 过期日期
             status: 状态
-            **kwargs: 其他字段
+            notes: 备注（可选）
             
         Returns:
             是否成功
         """
+        from .utils import format_date
+        
         nodes_data = self.load_nodes()
         servers = nodes_data.get('servers', [])
         
         # 检查是否已存在
         for server in servers:
-            if server.get('ip') == ip or server.get('domain') == domain:
-                self.logger.warning(f"服务器已存在: {domain}")
+            if server.get('ip') == ip:
+                self.logger.warning(f"服务器已存在: {ip}")
                 return False
         
-        # 生成ID
-        server_id = f"server-{len(servers) + 1:03d}"
+        # 系统自动记录当前时间
+        added_date = format_date()
         
         # 创建新服务器记录
         new_server = {
-            'id': server_id,
             'ip': ip,
-            'domain': domain,
             'added_date': added_date,
-            'expire_date': expire_date,
             'status': status,
             'last_heartbeat': None,
-            'notes': kwargs.get('notes', '')
+            'notes': notes
         }
-        
-        # 添加其他字段
-        for key, value in kwargs.items():
-            if key not in new_server:
-                new_server[key] = value
         
         servers.append(new_server)
         nodes_data['servers'] = servers
         
         self.save_nodes(nodes_data)
-        self.logger.info(f"已添加新服务器: {domain} ({ip})")
+        self.logger.info(f"已添加新服务器: {ip}")
         
         return True
     
+    def remove_server(self, ip: str) -> bool:
+        """
+        删除服务器
+
+        Args:
+            ip: 服务器IP地址
+
+        Returns:
+            是否成功删除
+        """
+        nodes_data = self.load_nodes()
+        servers = nodes_data.get('servers', [])
+
+        # 查找并删除服务器
+        initial_count = len(servers)
+        servers = [s for s in servers if s.get('ip') != ip]
+
+        if len(servers) == initial_count:
+            self.logger.warning(f"未找到服务器: {ip}")
+            return False
+
+        nodes_data['servers'] = servers
+        self.save_nodes(nodes_data)
+        self.logger.info(f"✅ 已删除服务器: {ip}")
+
+        return True
+
     def list_servers(self, filter_status: Optional[str] = None):
         """
         列出所有服务器
-        
+
         Args:
             filter_status: 过滤特定状态
         """
         nodes_data = self.load_nodes()
         servers = nodes_data.get('servers', [])
-        
+
         if not servers:
             self.logger.info("服务器列表为空")
             return
-        
+
         self.logger.info("=" * 80)
-        self.logger.info(f"{'ID':<15} {'域名':<25} {'IP':<15} {'剩余天数':<10} {'状态':<10}")
+        self.logger.info(f"{'IP地址':<18} {'剩余天数':<12} {'状态':<12} {'备注':<30}")
         self.logger.info("=" * 80)
-        
+
         for server in servers:
             if filter_status and server.get('status') != filter_status:
                 continue
-            
+
             try:
-                remaining = calculate_days_remaining(server['expire_date'])
+                total_days = self.config['lifecycle']['total_days']
+                remaining = calculate_days_remaining(server['added_date'], total_days)
             except:
                 remaining = -999
-            
-            self.logger.info(
-                f"{server.get('id', 'N/A'):<15} "
-                f"{server.get('domain', 'N/A'):<25} "
-                f"{server.get('ip', 'N/A'):<15} "
-                f"{remaining:<10} "
-                f"{server.get('status', 'N/A'):<10}"
-            )
-        
-        self.logger.info("=" * 80)
 
+            self.logger.info(
+                f"{server.get('ip', 'N/A'):<18} "
+                f"{remaining:<12} "
+                f"{server.get('status', 'N/A'):<12} "
+                f"{server.get('notes', ''):<30}"
+            )
+
+        self.logger.info("=" * 80)

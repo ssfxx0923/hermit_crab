@@ -155,12 +155,12 @@ class GitHubSync:
             self.logger.error(f"推送异常: {e}")
             return False
     
-    def update_server_status(self, server_id: str, status: str, **kwargs) -> bool:
+    def update_server_status(self, ip: str, status: str, **kwargs) -> bool:
         """
         更新单个服务器状态并推送到GitHub
         
         Args:
-            server_id: 服务器ID或域名
+            ip: 服务器IP地址
             status: 新状态
             **kwargs: 其他要更新的字段
             
@@ -181,7 +181,7 @@ class GitHubSync:
         updated = False
         
         for server in servers:
-            if server.get('id') == server_id or server.get('domain') == server_id:
+            if server.get('ip') == ip:
                 server['status'] = status
                 server['last_heartbeat'] = format_datetime()
                 
@@ -190,25 +190,25 @@ class GitHubSync:
                     server[key] = value
                 
                 updated = True
-                self.logger.info(f"服务器 {server_id} 状态已更新: {status}")
+                self.logger.info(f"服务器 {ip} 状态已更新: {status}")
                 break
         
         if not updated:
-            self.logger.warning(f"未找到服务器: {server_id}")
+            self.logger.warning(f"未找到服务器: {ip}")
             return False
         
         # 推送更新
-        commit_msg = f"Update server {server_id} status to {status}"
+        commit_msg = f"Update server {ip} status to {status}"
         return self.push_nodes(nodes_data, commit_msg)
     
-    def acquire_lock(self, server_id: str, lock_holder: str) -> bool:
+    def acquire_lock(self, ip: str, lock_holder: str) -> bool:
         """
         获取服务器锁（防止并发迁移到同一服务器）
         
         使用GitHub API的原子性来实现分布式锁
         
         Args:
-            server_id: 服务器ID
+            ip: 服务器IP地址
             lock_holder: 锁持有者标识
             
         Returns:
@@ -229,19 +229,19 @@ class GitHubSync:
             target_server = None
             
             for server in servers:
-                if server.get('id') == server_id or server.get('domain') == server_id:
+                if server.get('ip') == ip:
                     target_server = server
                     break
             
             if target_server is None:
-                self.logger.error(f"服务器不存在: {server_id}")
+                self.logger.error(f"服务器不存在: {ip}")
                 return False
             
             # 检查锁状态
             current_status = target_server.get('status')
             
             if current_status == 'transferring':
-                self.logger.warning(f"服务器 {server_id} 已被锁定")
+                self.logger.warning(f"服务器 {ip} 已被锁定")
                 return False
             
             # 尝试获取锁
@@ -250,10 +250,10 @@ class GitHubSync:
             target_server['lock_time'] = format_datetime()
             
             # 推送更新
-            commit_msg = f"Lock server {server_id} for {lock_holder}"
+            commit_msg = f"Lock server {ip} for {lock_holder}"
             
             if self.push_nodes(nodes_data, commit_msg):
-                self.logger.info(f"✅ 成功获取服务器锁: {server_id}")
+                self.logger.info(f"✅ 成功获取服务器锁: {ip}")
                 return True
             else:
                 self.logger.error("推送锁定状态失败")
@@ -263,12 +263,12 @@ class GitHubSync:
             self.logger.error(f"获取锁异常: {e}")
             return False
     
-    def release_lock(self, server_id: str, new_status: str = 'active') -> bool:
+    def release_lock(self, ip: str, new_status: str = 'active') -> bool:
         """
         释放服务器锁
         
         Args:
-            server_id: 服务器ID
+            ip: 服务器IP地址
             new_status: 释放后的新状态
             
         Returns:
@@ -285,15 +285,15 @@ class GitHubSync:
             servers = nodes_data.get('servers', [])
             
             for server in servers:
-                if server.get('id') == server_id or server.get('domain') == server_id:
+                if server.get('ip') == ip:
                     server['status'] = new_status
                     server.pop('lock_holder', None)
                     server.pop('lock_time', None)
                     
-                    commit_msg = f"Release lock on server {server_id}"
+                    commit_msg = f"Release lock on server {ip}"
                     
                     if self.push_nodes(nodes_data, commit_msg):
-                        self.logger.info(f"✅ 已释放服务器锁: {server_id}")
+                        self.logger.info(f"✅ 已释放服务器锁: {ip}")
                         return True
                     break
             

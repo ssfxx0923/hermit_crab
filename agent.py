@@ -13,24 +13,23 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from modules import (
-    Logger, load_config, get_current_ip, format_date,
+    Logger, get_config, get_current_ip,
     Monitor, Scanner, Migrator, Initializer,
-    GitHubSync, CloudFlareAPI
+    GitHubSync, CloudFlareAPI, get_ssh_password
 )
 
 
 class HermitCrabAgent:
     """Hermit Crab主控制器"""
     
-    def __init__(self, config_path: str = "/opt/hermit_crab/config.yaml"):
+    def __init__(self):
         """
         初始化Agent
         
-        Args:
-            config_path: 配置文件路径
+        配置从环境变量（.env文件）读取
         """
         # 加载配置
-        self.config = load_config(config_path)
+        self.config = get_config()
         
         # 设置日志
         log_file = os.path.join(
@@ -55,25 +54,24 @@ class HermitCrabAgent:
         
         self.logger.info("Hermit Crab Agent 已启动")
     
-    def cmd_init(self, added_date: str = None, domain: str = None):
+    def cmd_init(self):
         """
         初始化生命周期
         
-        Args:
-            added_date: 添加日期
-            domain: 当前域名
+        系统会自动：
+        - 记录当前时间戳作为添加日期
+        - 从 config.yaml 读取 current_domain
         """
         self.logger.info("=" * 60)
         self.logger.info("初始化 Hermit Crab")
         self.logger.info("=" * 60)
         
-        # 初始化生命周期
-        lifecycle = self.monitor.initialize_lifecycle(added_date)
+        # 初始化生命周期（系统自动记录当前时间）
+        lifecycle = self.monitor.initialize_lifecycle()
         
-        # 更新配置中的域名
-        if domain:
-            self.config['base']['current_domain'] = domain
-            self.logger.info(f"当前域名: {domain}")
+        # 显示当前域名（从配置读取）
+        current_domain = self.config['base']['current_domain']
+        self.logger.info(f"业务域名: {current_domain}")
         
         self.logger.info("✅ 初始化完成")
         self.monitor.display_status()
@@ -117,134 +115,223 @@ class HermitCrabAgent:
         self.logger.warning("🚨 需要执行迁移！")
         return True
     
-    def cmd_migrate(self, target_ip: str = None, password: str = None, auto: bool = False):
+    def cmd_migrate(self, target_ip: str = None, password: str = None, auto: bool = False, force: bool = False):
         """
         执行迁移
-        
+
         Args:
             target_ip: 目标服务器IP（可选，自动选择）
-            password: SSH密码
+            password: SSH密码（可选，从环境变量读取）
             auto: 是否自动模式（自动选择目标）
+            force: 强制迁移（忽略生命周期检查，选择剩余时间最长的服务器）
         """
-        self.logger.info("=" * 60)
-        self.logger.info("开始执行迁移流程")
-        self.logger.info("=" * 60)
-        
-        # 1. 检查是否需要迁移
-        status = self.monitor.get_status()
-        
-        if not status['initialized']:
-            self.logger.error("❌ 生命周期未初始化")
-            return False
-        
-        current_remaining = status['remaining_days']
-        self.logger.info(f"当前服务器剩余: {current_remaining} 天")
-        
-        # 2. 同步服务器列表
-        if self.github.is_available():
-            self.logger.info("从GitHub同步服务器列表...")
-            nodes_data = self.github.pull_nodes()
-            if nodes_data:
-                self.scanner.save_nodes(nodes_data)
-        
-        # 3. 选择目标服务器
-        if target_ip is None:
-            if not auto:
-                self.logger.error("请指定目标IP或使用 --auto 自动选择")
-                return False
-            
-            self.logger.info("自动选择目标服务器...")
-            target_server = self.scanner.select_target_server(current_remaining)
-            
-            if target_server is None:
-                self.logger.error("❌ 没有合适的目标服务器")
-                return False
-            
-            target_ip = target_server['ip']
-            target_domain = target_server['domain']
-            target_id = target_server['id']
-        else:
-            # 手动指定IP，查找对应服务器信息
-            available = self.scanner.get_available_servers()
-            target_server = None
-            
-            for server in available:
-                if server['ip'] == target_ip or server.get('domain') == target_ip:
-                    target_server = server
-                    target_ip = server['ip']
-                    target_domain = server['domain']
-                    target_id = server['id']
-                    break
-            
-            if target_server is None:
-                self.logger.error(f"❌ 目标服务器不在可用列表中: {target_ip}")
-                return False
-        
-        self.logger.info(f"目标服务器: {target_domain} ({target_ip})")
-        self.logger.info(f"目标剩余时间: {target_server['remaining_days']} 天")
-        
-        # 4. 获取锁（防止并发）
-        if self.github.is_available():
-            current_domain = self.config['base']['current_domain']
-            self.logger.info(f"尝试获取服务器锁: {target_id}")
-            
-            if not self.github.acquire_lock(target_id, current_domain):
-                self.logger.error("❌ 无法获取服务器锁，可能已被其他服务器选中")
-                return False
-        else:
-            # 本地更新状态
-            self.scanner.update_server_status(target_id, 'transferring')
-        
+        # 创建独立的迁移日志
+        from datetime import datetime
+        import logging
+
+        migration_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+        migration_log_dir = os.path.join(
+            self.config['base']['install_path'],
+            'logs',
+            'migrations'
+        )
+        os.makedirs(migration_log_dir, exist_ok=True)
+
+        migration_log_file = os.path.join(
+            migration_log_dir,
+            f'migration_{migration_time}.log'
+        )
+
+        # 添加文件日志处理器
+        file_handler = logging.FileHandler(migration_log_file, encoding='utf-8')
+        file_handler.setLevel(logging.DEBUG)
+        file_formatter = logging.Formatter(
+            '[%(asctime)s] [%(levelname)s] %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        file_handler.setFormatter(file_formatter)
+        self.logger.addHandler(file_handler)
+
         try:
-            # 5. 执行迁移
+            self.logger.info("=" * 60)
+            self.logger.info("开始执行迁移流程")
+            self.logger.info(f"迁移日志: {migration_log_file}")
+            self.logger.info("=" * 60)
+
+            # 1. 检查是否需要迁移
+            status = self.monitor.get_status()
+
+            if not status['initialized']:
+                self.logger.error("❌ 生命周期未初始化")
+                return False
+
+            current_remaining = status['remaining_days']
+            current_ip = get_current_ip()
+            self.logger.info(f"当前服务器IP: {current_ip}")
+            self.logger.info(f"当前服务器剩余: {current_remaining} 天")
+
+            # 如果是强制迁移，跳过生命周期检查
+            if force:
+                self.logger.warning("⚠️  强制迁移模式：忽略生命周期检查")
+
+            # 2. 同步服务器列表
+            if self.github.is_available():
+                self.logger.info("从GitHub同步服务器列表...")
+                nodes_data = self.github.pull_nodes()
+                if nodes_data:
+                    self.scanner.save_nodes(nodes_data)
+
+            # 3. 选择目标服务器
+            if target_ip is None:
+                if not auto:
+                    self.logger.error("请指定目标IP或使用 --auto 自动选择")
+                    return False
+
+                self.logger.info("自动选择目标服务器...")
+
+                # 如果是强制模式，选择剩余时间最长的服务器
+                if force:
+                    target_server = self.scanner.select_longest_remaining_server()
+                else:
+                    target_server = self.scanner.select_target_server(current_remaining)
+
+                if target_server is None:
+                    self.logger.error("❌ 没有合适的目标服务器")
+                    return False
+
+                target_ip = target_server['ip']
+            else:
+                # 手动指定IP，查找对应服务器信息
+                available = self.scanner.get_available_servers()
+                target_server = None
+
+                for server in available:
+                    if server['ip'] == target_ip:
+                        target_server = server
+                        break
+
+                if target_server is None:
+                    self.logger.error(f"❌ 目标服务器不在可用列表中: {target_ip}")
+                    return False
+
+            self.logger.info(f"目标服务器IP: {target_ip}")
+            self.logger.info(f"目标剩余时间: {target_server['remaining_days']} 天")
+
+            # 4. 获取SSH密码
+            if password is None:
+                # 从环境变量获取密码
+                password = get_ssh_password(target_ip)
+
+                if password is None:
+                    self.logger.error(
+                        "❌ 未找到SSH密码。请通过以下方式之一提供密码：\n"
+                        "  1. 命令行参数：--password your_password\n"
+                        "  2. 环境变量：HERMIT_SSH_PASSWORD=your_password\n"
+                        "  3. .env 文件：HERMIT_SSH_PASSWORD=your_password"
+                    )
+                    return False
+                else:
+                    self.logger.info("✅ 已从环境变量获取SSH密码")
+            else:
+                self.logger.info("✅ 使用命令行提供的SSH密码")
+
+            # 5. 获取锁（防止并发）
+            if self.github.is_available():
+                self.logger.info(f"尝试获取服务器锁: {target_ip}")
+
+                if not self.github.acquire_lock(target_ip, current_ip):
+                    self.logger.error("❌ 无法获取服务器锁，可能已被其他服务器选中")
+                    return False
+            else:
+                # 本地更新状态
+                self.scanner.update_server_status(target_ip, 'transferring')
+
+            # 6. 执行迁移
+            migrate_start_time = datetime.now()
+            self.logger.info(f"迁移开始时间: {migrate_start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+
             if not self.migrator.perform_migration(target_ip, password):
                 self.logger.error("❌ 迁移失败")
                 # 释放锁
                 if self.github.is_available():
-                    self.github.release_lock(target_id, 'idle')
+                    self.github.release_lock(target_ip, 'idle')
                 return False
-            
-            # 6. 初始化目标服务器
-            if not self.initializer.initialize_target_server(target_ip, target_server, self.migrator):
+
+            # 7. 初始化目标服务器
+            init_success = self.initializer.initialize_target_server(target_ip, target_server, self.migrator)
+            if not init_success:
                 self.logger.error("❌ 目标服务器初始化失败")
-                # 释放锁
-                if self.github.is_available():
-                    self.github.release_lock(target_id, 'idle')
-                return False
-            
-            # 7. 更新DNS（如果启用）
+                # 但 Rsync 已经成功，标记为部分成功
+                self.logger.warning("⚠️  迁移主体完成但初始化失败，需要手动完成初始化")
+
+            # 8. 更新DNS（如果启用）
             if self.cloudflare.is_available():
                 current_subdomain = self.config['base']['current_domain'].split('.')[0]
                 self.logger.info(f"更新DNS: {current_subdomain} -> {target_ip}")
-                
+
                 if self.cloudflare.update_domain_for_migration(current_subdomain, target_ip):
                     self.logger.info("✅ DNS已更新")
                 else:
                     self.logger.warning("⚠️  DNS更新失败，可能需要手动更新")
-            
-            # 8. 更新服务器状态
+
+            # 9. 更新服务器状态（即使初始化失败也要更新）
+            self.logger.info("更新服务器状态...")
+
             if self.github.is_available():
-                self.github.update_server_status(target_id, 'active')
+                # 目标服务器设置为 active
+                self.github.update_server_status(target_ip, 'active')
+
+                # 删除源服务器（已废弃）
+                self.logger.info(f"删除源服务器: {current_ip}")
+                nodes_data = self.github.pull_nodes()
+                if nodes_data:
+                    servers = nodes_data.get('servers', [])
+                    servers = [s for s in servers if s.get('ip') != current_ip]
+                    nodes_data['servers'] = servers
+                    self.github.push_nodes(nodes_data, f"Remove retired server {current_ip}")
             else:
-                self.scanner.update_server_status(target_id, 'active')
-            
-            # 9. 记录迁移历史
+                # 目标服务器设置为 active
+                self.scanner.update_server_status(target_ip, 'active')
+
+                # 删除源服务器
+                nodes_data = self.scanner.load_nodes()
+                servers = nodes_data.get('servers', [])
+                servers = [s for s in servers if s.get('ip') != current_ip]
+                nodes_data['servers'] = servers
+                self.scanner.save_nodes(nodes_data)
+
+            # 10. 记录迁移历史
             self.monitor.add_migration_record(target_server)
-            
+
+            # 计算总耗时
+            migrate_end_time = datetime.now()
+            total_elapsed = (migrate_end_time - migrate_start_time).total_seconds()
+
             self.logger.info("=" * 60)
             self.logger.info("🎉 迁移流程全部完成！")
             self.logger.info("=" * 60)
-            self.logger.info(f"新服务器: {target_domain} ({target_ip})")
-            self.logger.info("请等待新服务器的反馈...")
-            
+            self.logger.info(f"源服务器IP: {current_ip}")
+            self.logger.info(f"目标服务器IP: {target_ip}")
+            self.logger.info(f"迁移开始时间: {migrate_start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+            self.logger.info(f"迁移结束时间: {migrate_end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+            self.logger.info(f"总耗时: {total_elapsed:.2f}秒 ({total_elapsed/60:.1f}分钟)")
+            self.logger.info(f"迁移日志已保存: {migration_log_file}")
+            self.logger.info("=" * 60)
+
             return True
-            
+
         except Exception as e:
             self.logger.error(f"迁移异常: {e}")
+            import traceback
+            self.logger.error(traceback.format_exc())
             # 释放锁
             if self.github.is_available():
-                self.github.release_lock(target_id, 'idle')
+                self.github.release_lock(target_ip, 'idle')
             return False
+        finally:
+            # 移除文件日志处理器
+            self.logger.removeHandler(file_handler)
+            file_handler.close()
     
     def cmd_feedback(self, source_ip: str):
         """
@@ -295,8 +382,8 @@ class HermitCrabAgent:
             
             # 更新自己的状态到GitHub
             if self.github.is_available():
-                current_domain = self.config['base']['current_domain']
-                self.github.update_server_status(current_domain, 'active')
+                current_ip = get_current_ip()
+                self.github.update_server_status(current_ip, 'active')
             
             return True
         else:
@@ -351,24 +438,22 @@ class HermitCrabAgent:
         
         self.scanner.list_servers()
     
-    def cmd_add_server(self, ip: str, domain: str, added_date: str, 
-                      expire_date: str, notes: str = ""):
+    def cmd_add_server(self, ip: str, notes: str = ""):
         """
         添加新服务器
-        
+
         Args:
             ip: IP地址
-            domain: 域名
-            added_date: 添加日期
-            expire_date: 过期日期
-            notes: 备注
+            notes: 备注（可选）
+
+        系统会自动记录当前时间作为添加日期
         """
-        self.logger.info(f"添加新服务器: {domain} ({ip})")
-        
-        # 添加到本地
-        if self.scanner.add_server(ip, domain, added_date, expire_date, notes=notes):
+        self.logger.info(f"添加新服务器: {ip}")
+
+        # 添加到本地（系统自动记录时间）
+        if self.scanner.add_server(ip, notes=notes):
             self.logger.info("✅ 已添加到本地列表")
-            
+
             # 同步到GitHub
             if self.github.is_available():
                 nodes_data = self.scanner.load_nodes()
@@ -376,10 +461,36 @@ class HermitCrabAgent:
                     self.logger.info("✅ 已同步到GitHub")
                 else:
                     self.logger.warning("⚠️  GitHub同步失败")
-            
+
             return True
         else:
             self.logger.error("❌ 添加失败")
+            return False
+
+    def cmd_remove_server(self, ip: str):
+        """
+        删除服务器
+
+        Args:
+            ip: 服务器IP地址
+        """
+        self.logger.info(f"删除服务器: {ip}")
+
+        # 从本地删除
+        if self.scanner.remove_server(ip):
+            self.logger.info("✅ 已从本地列表删除")
+
+            # 同步到GitHub
+            if self.github.is_available():
+                nodes_data = self.scanner.load_nodes()
+                if self.github.push_nodes(nodes_data):
+                    self.logger.info("✅ 已同步到GitHub")
+                else:
+                    self.logger.warning("⚠️  GitHub同步失败")
+
+            return True
+        else:
+            self.logger.error("❌ 删除失败")
             return False
 
 
@@ -390,8 +501,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  # 初始化生命周期
-  %(prog)s init --added-date 2025-11-21 --domain a.ssfxx.com
+  # 初始化生命周期（系统自动记录时间）
+  %(prog)s init
   
   # 查看状态
   %(prog)s status
@@ -401,31 +512,34 @@ def main():
   
   # 手动迁移到指定服务器
   %(prog)s migrate --target 192.168.1.11 --password your_password
-  
+
   # 自动选择并迁移
   %(prog)s migrate --auto --password your_password
+
+  # 强制迁移到剩余时间最长的服务器（忽略生命周期检查）
+  %(prog)s migrate --auto --force
   
   # 守护进程模式
   %(prog)s daemon
   
   # 列出所有服务器
   %(prog)s list
-  
-  # 添加新服务器
-  %(prog)s add --ip 192.168.1.12 --domain server-3.ssfxx.com \\
-               --added-date 2025-11-21 --expire-date 2025-12-06
+
+  # 添加新服务器（系统自动记录时间）
+  %(prog)s add --ip 192.168.1.12
+  %(prog)s add --ip 192.168.1.13 --notes "备份服务器"
+
+  # 删除服务器
+  %(prog)s remove --ip 192.168.1.10
         """
     )
     
-    parser.add_argument('-c', '--config', default='/opt/hermit_crab/config.yaml',
-                       help='配置文件路径')
+    # 配置从 .env 文件读取，无需命令行参数
     
     subparsers = parser.add_subparsers(dest='command', help='可用命令')
     
     # init命令
-    init_parser = subparsers.add_parser('init', help='初始化生命周期')
-    init_parser.add_argument('--added-date', help='添加日期 (YYYY-MM-DD)')
-    init_parser.add_argument('--domain', help='当前域名')
+    init_parser = subparsers.add_parser('init', help='初始化生命周期（系统自动记录时间）')
     
     # status命令
     subparsers.add_parser('status', help='显示当前状态')
@@ -436,8 +550,9 @@ def main():
     # migrate命令
     migrate_parser = subparsers.add_parser('migrate', help='执行迁移')
     migrate_parser.add_argument('--target', help='目标服务器IP或域名')
-    migrate_parser.add_argument('--password', help='SSH密码')
+    migrate_parser.add_argument('--password', help='SSH密码（可选，优先从环境变量读取）')
     migrate_parser.add_argument('--auto', action='store_true', help='自动选择目标')
+    migrate_parser.add_argument('--force', action='store_true', help='强制迁移（忽略生命周期，选择剩余时间最长的服务器）')
     
     # feedback命令
     feedback_parser = subparsers.add_parser('feedback', help='发送迁移反馈')
@@ -448,14 +563,15 @@ def main():
     
     # list命令
     subparsers.add_parser('list', help='列出所有服务器')
-    
+
     # add命令
-    add_parser = subparsers.add_parser('add', help='添加新服务器')
-    add_parser.add_argument('--ip', required=True, help='IP地址')
-    add_parser.add_argument('--domain', required=True, help='域名')
-    add_parser.add_argument('--added-date', required=True, help='添加日期 (YYYY-MM-DD)')
-    add_parser.add_argument('--expire-date', required=True, help='过期日期 (YYYY-MM-DD)')
-    add_parser.add_argument('--notes', default='', help='备注')
+    add_parser = subparsers.add_parser('add', help='添加新服务器（系统自动记录时间）')
+    add_parser.add_argument('--ip', required=True, help='服务器IP地址')
+    add_parser.add_argument('--notes', default='', help='备注信息（可选）')
+
+    # remove命令
+    remove_parser = subparsers.add_parser('remove', help='删除服务器')
+    remove_parser.add_argument('--ip', required=True, help='服务器IP地址')
     
     args = parser.parse_args()
     
@@ -464,18 +580,18 @@ def main():
         sys.exit(1)
     
     # 创建Agent实例
-    agent = HermitCrabAgent(args.config)
+    agent = HermitCrabAgent()
     
     # 执行命令
     try:
         if args.command == 'init':
-            agent.cmd_init(args.added_date, args.domain)
+            agent.cmd_init()
         elif args.command == 'status':
             agent.cmd_status()
         elif args.command == 'check':
             agent.cmd_check()
         elif args.command == 'migrate':
-            agent.cmd_migrate(args.target, args.password, args.auto)
+            agent.cmd_migrate(args.target, args.password, args.auto, args.force)
         elif args.command == 'feedback':
             agent.cmd_feedback(args.source)
         elif args.command == 'daemon':
@@ -483,10 +599,9 @@ def main():
         elif args.command == 'list':
             agent.cmd_list()
         elif args.command == 'add':
-            agent.cmd_add_server(
-                args.ip, args.domain, args.added_date,
-                args.expire_date, args.notes
-            )
+            agent.cmd_add_server(args.ip, args.notes)
+        elif args.command == 'remove':
+            agent.cmd_remove_server(args.ip)
         else:
             parser.print_help()
             sys.exit(1)

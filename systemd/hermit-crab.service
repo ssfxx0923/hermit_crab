@@ -6,22 +6,14 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 User=root
-WorkingDirectory=/opt/hermit_crab
-ExecStart=/usr/bin/python3 /opt/hermit_crab/agent.py check
-
-# 环境变量（如果需要）
-# Environment="HERMIT_GITHUB_TOKEN=your_token"
-# Environment="HERMIT_CF_TOKEN=your_token"
+WorkingDirectory=/root/hermit_crab
+EnvironmentFile=/root/hermit_crab/.env
+ExecStart=/usr/bin/python3 /root/hermit_crab/agent.py check
 
 # 日志配置
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=hermit-crab
-
-# 安全选项
-# ProtectSystem=strict
-# ProtectHome=yes
-# NoNewPrivileges=true
 
 [Install]
 WantedBy=multi-user.target

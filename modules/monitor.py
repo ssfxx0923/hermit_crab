@@ -28,27 +28,23 @@ class Monitor:
         # 确保数据目录存在
         os.makedirs(self.data_dir, exist_ok=True)
     
-    def initialize_lifecycle(self, added_date: Optional[str] = None) -> Dict:
+    def initialize_lifecycle(self) -> Dict:
         """
         初始化生命周期信息
         
-        Args:
-            added_date: 添加日期，默认为今天
-            
+        系统自动记录当前时间作为添加日期
+        
         Returns:
             生命周期信息字典
         """
-        if added_date is None:
-            added_date = format_date()
+        # 系统自动记录当前时间
+        added_date = format_date()
         
-        # 计算过期日期
-        added = datetime.strptime(added_date, "%Y-%m-%d")
+        # 只存储添加日期，过期日期通过 added_date + total_days 自动计算
         total_days = self.config['lifecycle']['total_days']
-        expire = added + timedelta(days=total_days)
         
         lifecycle_info = {
             'added_date': added_date,
-            'expire_date': format_date(expire),
             'total_days': total_days,
             'current_ip': get_current_ip(),
             'current_domain': self.config['base'].get('current_domain', ''),
@@ -60,7 +56,12 @@ class Monitor:
         with open(self.lifecycle_file, 'w', encoding='utf-8') as f:
             json.dump(lifecycle_info, f, indent=2, ensure_ascii=False)
         
-        self.logger.info(f"生命周期已初始化: {added_date} -> {format_date(expire)}")
+        # 计算过期日期用于日志显示
+        from datetime import timedelta
+        added = datetime.strptime(added_date, "%Y-%m-%d")
+        expire = added + timedelta(days=total_days)
+        
+        self.logger.info(f"生命周期已初始化: {added_date} -> {format_date(expire)} ({total_days}天)")
         return lifecycle_info
     
     def load_lifecycle(self) -> Optional[Dict]:
@@ -93,7 +94,8 @@ class Monitor:
             return -1
         
         try:
-            return calculate_days_remaining(lifecycle['expire_date'])
+            total_days = lifecycle.get('total_days', self.config['lifecycle']['total_days'])
+            return calculate_days_remaining(lifecycle['added_date'], total_days)
         except Exception as e:
             self.logger.error(f"计算剩余天数失败: {e}")
             return -1
@@ -135,7 +137,6 @@ class Monitor:
         record = {
             'timestamp': datetime.now().isoformat(),
             'target_ip': target_server.get('ip'),
-            'target_domain': target_server.get('domain'),
             'remaining_days': self.get_remaining_days()
         }
         
@@ -145,7 +146,7 @@ class Monitor:
         with open(self.lifecycle_file, 'w', encoding='utf-8') as f:
             json.dump(lifecycle, f, indent=2, ensure_ascii=False)
         
-        self.logger.info(f"迁移记录已添加: {target_server.get('domain')}")
+        self.logger.info(f"迁移记录已添加: {target_server.get('ip')}")
     
     def get_status(self) -> Dict:
         """
@@ -177,10 +178,16 @@ class Monitor:
         else:
             status = 'HEALTHY'
         
+        # 计算过期日期用于显示
+        from datetime import timedelta
+        added = datetime.strptime(lifecycle['added_date'], "%Y-%m-%d")
+        total_days = lifecycle.get('total_days', self.config['lifecycle']['total_days'])
+        expire = added + timedelta(days=total_days)
+        
         return {
             'initialized': True,
             'added_date': lifecycle['added_date'],
-            'expire_date': lifecycle['expire_date'],
+            'expire_date': format_date(expire),  # 仅用于显示
             'remaining_days': remaining,
             'should_migrate': should_migrate,
             'status': status,

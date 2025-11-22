@@ -5,13 +5,13 @@
 
 import os
 import sys
-import yaml
 import logging
 import socket
 import subprocess
 from datetime import datetime
 from typing import Dict, Any, Optional
 import colorlog
+from dotenv import load_dotenv
 
 
 class Logger:
@@ -78,24 +78,117 @@ class Logger:
         return self.logger
 
 
-def load_config(config_path: str = "/opt/hermit_crab/config.yaml") -> Dict[str, Any]:
+def load_env(env_path: Optional[str] = None):
     """
-    加载配置文件
+    加载 .env 环境变量文件
     
     Args:
-        config_path: 配置文件路径
-        
+        env_path: .env 文件路径，默认为项目根目录的 .env
+    """
+    if env_path is None:
+        # 尝试多个可能的位置（优先级从高到低）
+        possible_paths = [
+            ".env",  # 当前工作目录
+            os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env"),  # 脚本所在目录
+        ]
+        # 如果设置了 HERMIT_INSTALL_PATH 环境变量，也尝试该路径
+        install_path = os.getenv("HERMIT_INSTALL_PATH")
+        if install_path:
+            possible_paths.append(os.path.join(install_path, ".env"))
+
+        for path in possible_paths:
+            if os.path.exists(path):
+                env_path = path
+                break
+    
+    if env_path and os.path.exists(env_path):
+        load_dotenv(env_path)
+        return True
+    return False
+
+
+def get_config() -> Dict[str, Any]:
+    """
+    从环境变量加载配置（替代 config.yaml）
+    
     Returns:
         配置字典
     """
-    try:
-        with open(config_path, 'r', encoding='utf-8') as f:
-            config = yaml.safe_load(f)
-        return config
-    except FileNotFoundError:
-        raise FileNotFoundError(f"配置文件未找到: {config_path}")
-    except yaml.YAMLError as e:
-        raise ValueError(f"配置文件格式错误: {e}")
+    # 确保加载.env文件
+    load_env()
+    
+    def get_env(key: str, default=None):
+        """辅助函数：获取环境变量"""
+        return os.getenv(key, default)
+    
+    def get_env_bool(key: str, default=False) -> bool:
+        """辅助函数：获取布尔值环境变量"""
+        val = os.getenv(key, str(default)).lower()
+        return val in ('true', '1', 'yes', 'on')
+    
+    def get_env_int(key: str, default=0) -> int:
+        """辅助函数：获取整数环境变量"""
+        try:
+            return int(os.getenv(key, default))
+        except:
+            return default
+    
+    # 构建配置字典
+    install_path = get_env('HERMIT_INSTALL_PATH', '/root/hermit_crab')
+    
+    return {
+        'base': {
+            'install_path': install_path,
+            'log_level': get_env('HERMIT_LOG_LEVEL', 'INFO'),
+            'current_domain': get_env('HERMIT_CURRENT_DOMAIN', ''),
+        },
+        'lifecycle': {
+            'total_days': get_env_int('HERMIT_TOTAL_DAYS', 15),
+            'migrate_threshold_days': get_env_int('HERMIT_MIGRATE_THRESHOLD', 5),
+            'minimum_gain_days': get_env_int('HERMIT_MINIMUM_GAIN_DAYS', 1),
+            'check_interval': get_env_int('HERMIT_CHECK_INTERVAL', 3600),
+        },
+        'github': {
+            'enabled': get_env_bool('HERMIT_GITHUB_ENABLED', True),
+            'repo': get_env('HERMIT_GITHUB_REPO', ''),
+            'token_env': 'HERMIT_GITHUB_TOKEN',
+            'nodes_file': get_env('HERMIT_GITHUB_NODES_FILE', 'nodes.json'),
+            'local_cache': f"{install_path}/data/nodes.json",
+        },
+        'cloudflare': {
+            'enabled': get_env_bool('HERMIT_CF_ENABLED', True),
+            'zone_id': get_env('HERMIT_CF_ZONE_ID', ''),
+            'api_token_env': 'HERMIT_CF_TOKEN',
+            'domain': get_env('HERMIT_CF_DOMAIN', ''),
+            'ttl': get_env_int('HERMIT_CF_TTL', 120),
+        },
+        'security': {
+            'ssh_key_path': get_env('HERMIT_SSH_KEY_PATH', '/root/.ssh/hermit_crab_id_rsa'),
+            'ssh_user': get_env('HERMIT_SSH_USER', 'root'),
+            'use_password': True,
+        },
+        'migration': {
+            'ssh_timeout': get_env_int('HERMIT_SSH_TIMEOUT', 30),
+            'max_retries': get_env_int('HERMIT_MAX_RETRIES', 3),
+            'retry_interval': get_env_int('HERMIT_RETRY_INTERVAL', 300),
+        },
+        'rsync': {
+            'bandwidth_limit': get_env_int('HERMIT_RSYNC_BANDWIDTH_LIMIT', 0),
+            'timeout': get_env_int('HERMIT_RSYNC_TIMEOUT', 7200),
+            'exclude_file': f"{install_path}/config/exclude_list.txt",
+            'extra_args': get_env('HERMIT_RSYNC_EXTRA_ARGS', '-aAXvzP --delete --numeric-ids'),
+        },
+        'feedback': {
+            'startup_wait': get_env_int('HERMIT_STARTUP_WAIT', 120),
+            'max_retry': 10,
+            'retry_interval': 300,
+        },
+        'debug': {
+            'enabled': get_env_bool('HERMIT_DEBUG', False),
+            'dry_run': get_env_bool('HERMIT_DRY_RUN', False),
+            'skip_reboot': get_env_bool('HERMIT_SKIP_REBOOT', False),
+        },
+    }
 
 
 def get_current_ip() -> str:
@@ -180,23 +273,26 @@ def get_env_variable(var_name: str, default: Optional[str] = None) -> Optional[s
     return os.environ.get(var_name, default)
 
 
-def calculate_days_remaining(expire_date: str) -> int:
+def calculate_days_remaining(added_date: str, total_days: int) -> int:
     """
     计算剩余天数
     
     Args:
-        expire_date: 过期日期字符串 (YYYY-MM-DD)
+        added_date: 添加日期字符串 (YYYY-MM-DD)
+        total_days: 服务器总生命周期（天）
         
     Returns:
         剩余天数
     """
     try:
-        expire = datetime.strptime(expire_date, "%Y-%m-%d")
+        from datetime import timedelta
+        added = datetime.strptime(added_date, "%Y-%m-%d")
+        expire = added + timedelta(days=total_days)
         now = datetime.now()
         delta = expire - now
         return delta.days
     except Exception as e:
-        raise ValueError(f"日期格式错误: {expire_date}, 错误: {e}")
+        raise ValueError(f"日期格式错误: {added_date}, 错误: {e}")
 
 
 def format_date(date_obj: datetime = None) -> str:
@@ -272,4 +368,67 @@ def install_package(package: str) -> bool:
     else:
         logger.error(f"{package} 安装失败: {result.stderr.decode()}")
         return False
+
+
+def get_ssh_password(target: str = None) -> Optional[str]:
+    """
+    获取SSH密码
+    
+    支持三种方式：
+    1. 通用密码：HERMIT_SSH_PASSWORD=common_password
+    2. 映射密码：HERMIT_SSH_PASSWORD=ip1:pass1|ip2:pass2
+    3. 混合模式：HERMIT_SSH_PASSWORD=default_pass + HERMIT_SSH_PASSWORD_MAP=ip1:pass1
+    
+    Args:
+        target: 目标服务器IP或域名
+        
+    Returns:
+        SSH密码，未找到返回None
+    """
+    # 方式1: 先尝试从 HERMIT_SSH_PASSWORD_MAP 获取特定服务器密码
+    password_map = get_env_variable('HERMIT_SSH_PASSWORD_MAP')
+    if password_map and target:
+        for mapping in password_map.split('|'):
+            if ':' in mapping:
+                host, password = mapping.split(':', 1)
+                if host.strip() == target.strip():
+                    return password
+    
+    # 方式2: 从 HERMIT_SSH_PASSWORD 获取
+    password_env = get_env_variable('HERMIT_SSH_PASSWORD')
+    if password_env:
+        # 检查是否为映射格式（包含 | 或 :）
+        if '|' in password_env and target:
+            # 映射格式：ip1:pass1|ip2:pass2
+            for mapping in password_env.split('|'):
+                if ':' in mapping:
+                    host, password = mapping.split(':', 1)
+                    if host.strip() == target.strip():
+                        return password
+            # 未找到匹配，返回None（不使用默认密码）
+            return None
+        else:
+            # 通用密码格式
+            return password_env
+    
+    return None
+
+
+def parse_password_map(password_str: str) -> Dict[str, str]:
+    """
+    解析密码映射字符串
+    
+    Args:
+        password_str: 密码映射字符串，格式：ip1:pass1|ip2:pass2
+        
+    Returns:
+        密码字典
+    """
+    password_map = {}
+    if password_str:
+        for mapping in password_str.split('|'):
+            if ':' in mapping:
+                host, password = mapping.split(':', 1)
+                password_map[host.strip()] = password
+    return password_map
 

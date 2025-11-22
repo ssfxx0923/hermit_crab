@@ -23,7 +23,7 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
     exit 0
 fi
 
-INSTALL_PATH="/opt/hermit_crab"
+INSTALL_PATH="/root/hermit_crab"
 
 # 1. 停止并禁用服务
 echo ""

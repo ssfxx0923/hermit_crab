@@ -1,0 +1,54 @@
+[2025-11-21 13:56:41] [INFO] ============================================================
+[2025-11-21 13:56:41] [INFO] 开始执行迁移流程
+[2025-11-21 13:56:41] [INFO] 迁移日志: /root/hermit_crab/logs/migrations/migration_20251121_135641.log
+[2025-11-21 13:56:41] [INFO] ============================================================
+[2025-11-21 13:56:41] [INFO] 剩余时间 14 天，暂不需要迁移
+[2025-11-21 13:56:41] [INFO] 当前服务器IP: 170.64.226.135
+[2025-11-21 13:56:41] [INFO] 当前服务器剩余: 14 天
+[2025-11-21 13:56:41] [WARNING] ⚠️  强制迁移模式：忽略生命周期检查
+[2025-11-21 13:56:41] [INFO] 从GitHub同步服务器列表...
+[2025-11-21 13:56:41] [INFO] 从GitHub拉取: nodes.json
+[2025-11-21 13:56:41] [INFO] ✅ 成功拉取服务器列表 (1 个服务器)
+[2025-11-21 13:56:41] [INFO] 服务器列表已保存
+[2025-11-21 13:56:41] [INFO] 自动选择目标服务器...
+[2025-11-21 13:56:41] [INFO] 找到 1 个可用服务器
+[2025-11-21 13:56:41] [INFO] ✅ 选择剩余时间最长的服务器: 159.65.104.203 (剩余 14 天)
+[2025-11-21 13:56:41] [INFO] 目标服务器IP: 159.65.104.203
+[2025-11-21 13:56:41] [INFO] 目标剩余时间: 14 天
+[2025-11-21 13:56:41] [INFO] ✅ 已从环境变量获取SSH密码
+[2025-11-21 13:56:41] [INFO] 尝试获取服务器锁: 159.65.104.203
+[2025-11-21 13:56:41] [INFO] 从GitHub拉取: nodes.json
+[2025-11-21 13:56:42] [INFO] ✅ 成功拉取服务器列表 (1 个服务器)
+[2025-11-21 13:56:42] [INFO] 推送服务器列表到GitHub...
+[2025-11-21 13:56:43] [INFO] ✅ 服务器列表已更新到GitHub
+[2025-11-21 13:56:43] [INFO] ✅ 成功获取服务器锁: 159.65.104.203
+[2025-11-21 13:56:43] [INFO] 迁移开始时间: 2025-11-21 13:56:43
+[2025-11-21 13:56:43] [INFO] ============================================================
+[2025-11-21 13:56:43] [INFO] 开始迁移到目标服务器: 159.65.104.203
+[2025-11-21 13:56:43] [INFO] ============================================================
+[2025-11-21 13:56:43] [INFO] 测试SSH连接: 159.65.104.203
+[2025-11-21 13:56:45] [ERROR] SSH连接失败: @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+IT IS POSSIBLE THAT SOMEONE IS DOING SOMETHING NASTY!
+Someone could be eavesdropping on you right now (man-in-the-middle attack)!
+It is also possible that a host key has just been changed.
+The fingerprint for the ED25519 key sent by the remote host is
+SHA256:FKoz/7rHHtJTy/nsHh67xlv6KxgXs+MRRj7BNyDJrAc.
+Please contact your system administrator.
+Add correct host key in /root/.ssh/known_hosts to get rid of this message.
+Offending ECDSA key in /root/.ssh/known_hosts:3
+  remove with:
+  ssh-keygen -f '/root/.ssh/known_hosts' -R '159.65.104.203'
+Password authentication is disabled to avoid man-in-the-middle attacks.
+Keyboard-interactive authentication is disabled to avoid man-in-the-middle attacks.
+UpdateHostkeys is disabled because the host key is not trusted.
+root@159.65.104.203: Permission denied (publickey,password).
+
+[2025-11-21 13:56:45] [ERROR] SSH连接测试失败
+[2025-11-21 13:56:45] [ERROR] ❌ 迁移失败
+[2025-11-21 13:56:45] [INFO] 从GitHub拉取: nodes.json
+[2025-11-21 13:56:45] [INFO] ✅ 成功拉取服务器列表 (1 个服务器)
+[2025-11-21 13:56:45] [INFO] 推送服务器列表到GitHub...
+[2025-11-21 13:56:47] [INFO] ✅ 服务器列表已更新到GitHub
+[2025-11-21 13:56:47] [INFO] ✅ 已释放服务器锁: 159.65.104.203

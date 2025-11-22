@@ -169,33 +169,47 @@ class Migrator:
         
         # 执行rsync
         start_time = time.time()
-        
+
         try:
+            # 输出到终端显示进度，不完全记录到日志
+            self.logger.info("Rsync 传输中，实时进度显示：")
+            self.logger.info("-" * 60)
+
             process = subprocess.Popen(
                 cmd,
                 shell=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                text=True
+                text=True,
+                bufsize=1
             )
-            
-            # 实时输出
+
+            # 实时输出到终端
+            line_count = 0
             for line in process.stdout:
                 line = line.strip()
                 if line:
-                    self.logger.debug(line)
-            
+                    # 直接打印到终端（不经过logger，避免日志文件过大）
+                    print(line, flush=True)
+                    line_count += 1
+
+                    # 每100行记录一次统计到日志
+                    if line_count % 100 == 0:
+                        self.logger.debug(f"已处理 {line_count} 个文件...")
+
             process.wait()
-            
+
             elapsed = time.time() - start_time
-            
+            self.logger.info("-" * 60)
+            self.logger.info(f"传输统计: 共处理 {line_count} 个文件/目录")
+
             if process.returncode == 0:
                 self.logger.info(f"✅ Rsync同步完成 (耗时: {elapsed:.2f}秒)")
                 return True
             else:
                 self.logger.error(f"❌ Rsync同步失败 (返回码: {process.returncode})")
                 return False
-                
+
         except Exception as e:
             self.logger.error(f"Rsync执行异常: {e}")
             return False
@@ -270,30 +284,38 @@ class Migrator:
         self.logger.info("关键文件备份完成")
         return True
     
-    def restore_network_config(self, target_ip: str) -> bool:
+    def restore_network_config(self, target_ip: str, password: Optional[str] = None) -> bool:
         """
         恢复目标服务器的网络配置
-        
+
         Args:
             target_ip: 目标服务器IP
-            
+            password: SSH密码（可选，SSH密钥不可用时使用）
+
         Returns:
             是否成功
         """
         self.logger.info("恢复目标服务器网络配置...")
-        
+
         restore_commands = [
             "cp -a /root/backup_before_migration/netplan/* /etc/netplan/ 2>/dev/null || true",
             "cp -a /root/backup_before_migration/hostname /etc/hostname 2>/dev/null || true",
             "cp -a /root/backup_before_migration/hosts /etc/hosts 2>/dev/null || true",
             "netplan apply 2>/dev/null || true"
         ]
-        
+
         for cmd in restore_commands:
+            # 尝试使用SSH密钥
             returncode, _, stderr = self.execute_remote_command(target_ip, cmd)
+
+            # 如果失败且有密码，尝试使用密码
+            if returncode != 0 and password:
+                self.logger.debug(f"SSH密钥执行失败，尝试使用密码: {cmd}")
+                returncode, _, stderr = self.execute_remote_command(target_ip, cmd, use_password=True, password=password)
+
             if returncode != 0:
                 self.logger.warning(f"恢复命令执行警告: {stderr}")
-        
+
         self.logger.info("网络配置恢复完成")
         return True
     
@@ -337,9 +359,9 @@ class Migrator:
             if not self.rsync_system_files(target_ip):
                 self.logger.error("Rsync系统同步失败")
                 return False
-            
-            # 5. 恢复网络配置
-            if not self.restore_network_config(target_ip):
+
+            # 5. 恢复网络配置（传递密码作为备用）
+            if not self.restore_network_config(target_ip, password):
                 self.logger.error("恢复网络配置失败")
                 return False
             
