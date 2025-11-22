@@ -19,7 +19,8 @@ cd /root/hermit_crab
 
 安装脚本会自动：
 - 安装系统依赖（rsync, python3, ssh 等）
-- 安装 Python 依赖
+- 创建Python虚拟环境（`/root/hermit_crab/venv`）
+- 在虚拟环境中安装Python依赖
 - 配置 systemd 定时器
 
 ## ⚙️ 配置
@@ -69,22 +70,25 @@ HERMIT_MIGRATE_THRESHOLD=5        # 剩余N天时触发迁移
 ### 1. 初始化当前服务器
 
 ```bash
-python3 agent.py init
+cd /root/hermit_crab
+./venv/bin/python agent.py init
+# 或使用全局命令
+hermit-crab init
 # 系统自动记录当前时间，domain 从 .env 读取
 ```
 
 ### 2. 添加备用服务器
 
 ```bash
-python3 agent.py add --ip 192.168.1.11
-python3 agent.py add --ip 192.168.1.12 --notes "备份服务器"
+hermit-crab add --ip 192.168.1.11
+hermit-crab add --ip 192.168.1.12 --notes "备份服务器"
 # 系统自动记录添加时间
 ```
 
 ### 3. 删除服务器
 
 ```bash
-python3 agent.py remove --ip 192.168.1.11
+hermit-crab remove --ip 192.168.1.11
 # 从本地和 GitHub 中删除服务器
 ```
 
@@ -100,31 +104,35 @@ systemctl start hermit-crab.timer
 
 ```bash
 # 查看状态
-python3 agent.py status
+hermit-crab status
 
 # 检查是否需要迁移
-python3 agent.py check
+hermit-crab check
 
 # 列出所有服务器
-python3 agent.py list
+hermit-crab list
 
 # 添加服务器
-python3 agent.py add --ip 192.168.1.11 --notes "备份服务器"
+hermit-crab add --ip 192.168.1.11 --notes "备份服务器"
 
 # 删除服务器
-python3 agent.py remove --ip 192.168.1.11
+hermit-crab remove --ip 192.168.1.11
 
 # 手动迁移到指定服务器
-python3 agent.py migrate --target 192.168.1.11
+hermit-crab migrate --target 192.168.1.11
 
 # 自动选择目标并迁移
-python3 agent.py migrate --auto
+hermit-crab migrate --auto
 
 # 强制迁移到剩余时间最长的服务器（忽略生命周期检查）
-python3 agent.py migrate --auto --force
+hermit-crab migrate --auto --force
 
 # 守护进程模式（持续监控）
-python3 agent.py daemon
+hermit-crab daemon
+
+# 或直接使用虚拟环境Python
+cd /root/hermit_crab
+./venv/bin/python agent.py status
 ```
 
 ## 🔄 工作流程
@@ -272,6 +280,8 @@ HERMIT_SKIP_REBOOT=true   # 跳过重启
 ```bash
 ./uninstall.sh
 ```
+
+**注意**：Python依赖包会随虚拟环境自动删除，无需手动卸载。
 
 ## 📄 License
 

@@ -83,8 +83,9 @@ class Initializer:
         """
         self.logger.info("更新目标服务器生命周期信息...")
 
-        # 创建初始化命令（系统自动记录时间）
-        cmd = f"cd {self.install_path} && python3 agent.py init"
+        # 使用虚拟环境的 Python
+        venv_python = f"{self.install_path}/venv/bin/python"
+        cmd = f"cd {self.install_path} && {venv_python} agent.py init"
 
         returncode, _, stderr = migrator.execute_remote_command(target_ip, cmd)
 
@@ -139,20 +140,21 @@ class Initializer:
             是否成功
         """
         self.logger.info("创建迁移标记文件...")
-        
+
         # 获取当前服务器IP
         from .utils import get_current_ip
         source_ip = get_current_ip()
-        
-        flag_content = f"""{{
+
+        # 使用cat heredoc避免JSON特殊字符问题
+        cmd = f"""cat > {self.install_path}/data/migration_flag.json << EOFMARKER
+{{
     "migrated": true,
     "migration_time": "{format_datetime()}",
     "source_ip": "{source_ip}",
     "target_ip": "{target_ip}"
-}}"""
-        
-        cmd = f"echo '{flag_content}' > {self.install_path}/data/migration_flag.json"
-        
+}}
+EOFMARKER"""
+
         returncode, _, stderr = migrator.execute_remote_command(target_ip, cmd)
         
         if returncode == 0:
@@ -161,33 +163,6 @@ class Initializer:
         else:
             self.logger.error(f"❌ 创建迁移标记失败: {stderr}")
             return False
-    
-    def cleanup_python_cache(self, target_ip: str, migrator) -> bool:
-        """
-        清理 Python 字节码缓存（避免跨机器兼容性问题）
-
-        Args:
-            target_ip: 目标服务器IP
-            migrator: Migrator实例
-
-        Returns:
-            是否成功
-        """
-        self.logger.info("清理 Python 字节码缓存...")
-
-        cleanup_commands = [
-            "find /usr -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true",
-            "find /usr/local -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true",
-            "find /root -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true",
-            "find /home -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true",
-        ]
-
-        for cmd in cleanup_commands:
-            self.logger.debug(f"执行: {cmd}")
-            migrator.execute_remote_command(target_ip, cmd)
-
-        self.logger.info("✅ Python 缓存清理完成")
-        return True
 
     def reboot_target_server(self, target_ip: str, migrator) -> bool:
         """
@@ -207,8 +182,8 @@ class Initializer:
             self.logger.warning("⚠️  调试模式：跳过重启")
             return True
 
-        # 发送重启命令
-        cmd = "nohup sh -c 'sleep 2 && reboot' >/dev/null 2>&1 &"
+        # 发送重启命令（使用双引号和转义避免嵌套单引号问题）
+        cmd = 'nohup sh -c "sleep 2 && reboot" >/dev/null 2>&1 &'
 
         returncode, _, stderr = migrator.execute_remote_command(target_ip, cmd)
 
@@ -295,6 +270,8 @@ class Initializer:
         """
         self.logger.info("=" * 60)
         self.logger.info("开始初始化目标服务器")
+        self.logger.info(f"目标IP: {target_ip}")
+        self.logger.info(f"目标剩余天数: {target_server.get('remaining_days', 'N/A')}")
         self.logger.info("=" * 60)
         
         try:
@@ -302,33 +279,29 @@ class Initializer:
             if not self.sync_config_to_target(target_ip, migrator):
                 return False
 
-            # 2. 清理 Python 字节码缓存（跨机器可能不兼容）
-            if not self.cleanup_python_cache(target_ip, migrator):
-                return False
-
-            # 3. 更新生命周期
+            # 2. 更新生命周期
             if not self.update_lifecycle_on_target(target_ip, migrator):
                 return False
 
-            # 4. 配置systemd服务
+            # 3. 配置systemd服务
             if not self.setup_systemd_service_on_target(target_ip, migrator):
                 return False
 
-            # 5. 创建迁移标记
+            # 4. 创建迁移标记
             if not self.create_migration_flag(target_ip, migrator):
                 return False
 
-            # 6. 重启目标服务器
+            # 5. 重启目标服务器
             if not self.reboot_target_server(target_ip, migrator):
                 return False
 
-            # 7. 等待服务器上线
+            # 6. 等待服务器上线
             startup_wait = self.config['feedback']['startup_wait']
             if not self.wait_for_target_online(target_ip, migrator, max_wait=startup_wait):
                 self.logger.warning("⚠️  服务器重启超时，可能需要手动检查")
                 return False
 
-            # 8. 验证服务状态
+            # 7. 验证服务状态
             self.verify_services_on_target(target_ip, migrator)
             
             self.logger.info("=" * 60)

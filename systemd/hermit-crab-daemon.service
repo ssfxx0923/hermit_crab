@@ -8,7 +8,7 @@ Type=simple
 User=root
 WorkingDirectory=/root/hermit_crab
 EnvironmentFile=/root/hermit_crab/.env
-ExecStart=/usr/bin/python3 /root/hermit_crab/agent.py daemon
+ExecStart=/root/hermit_crab/venv/bin/python /root/hermit_crab/agent.py daemon
 
 # 自动重启配置
 Restart=always

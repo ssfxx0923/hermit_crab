@@ -54,7 +54,7 @@ echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
     echo "备份数据..."
     mkdir -p /root/hermit_crab_backup
-    cp -r "$INSTALL_PATH/config.yaml" /root/hermit_crab_backup/ 2>/dev/null || true
+    cp -r "$INSTALL_PATH/.env" /root/hermit_crab_backup/ 2>/dev/null || true
     cp -r "$INSTALL_PATH/data" /root/hermit_crab_backup/ 2>/dev/null || true
     cp -r "$INSTALL_PATH/logs" /root/hermit_crab_backup/ 2>/dev/null || true
     echo "✅ 数据已备份到 /root/hermit_crab_backup"
@@ -69,8 +69,7 @@ echo "========================================"
 echo "✅ Hermit Crab 已卸载"
 echo "========================================"
 echo ""
-echo "注意: Python包未被卸载，如需卸载请手动执行:"
-echo "  pip3 uninstall PyYAML PyGithub requests cloudflare paramiko python-dateutil colorlog psutil"
+echo "注意: Python依赖包已随虚拟环境删除，无需手动卸载"
 echo ""
 
 exit 0

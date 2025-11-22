@@ -6,6 +6,7 @@
 import os
 import time
 import subprocess
+import shlex
 from typing import Dict, List, Optional
 from .utils import Logger, run_command, check_command_exists, install_package
 
@@ -50,9 +51,14 @@ class Migrator:
             连接是否成功
         """
         self.logger.info(f"测试SSH连接: {target_ip}")
-        
+
+        # 清除旧的SSH主机密钥记录（防止重装服务器后密钥变化导致连接失败）
+        self.logger.debug(f"清除 {target_ip} 的SSH主机密钥记录...")
+        run_command(f"ssh-keygen -R {target_ip} 2>/dev/null", timeout=10)
+
         if password:
-            cmd = f"sshpass -p '{password}' ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 {self.ssh_user}@{target_ip} 'echo SUCCESS'"
+            escaped_password = shlex.quote(password)
+            cmd = f"sshpass -p {escaped_password} ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 {self.ssh_user}@{target_ip} 'echo SUCCESS'"
         else:
             cmd = f"ssh -i {self.ssh_key} -o StrictHostKeyChecking=no -o ConnectTimeout=10 {self.ssh_user}@{target_ip} 'echo SUCCESS'"
         
@@ -94,8 +100,9 @@ class Migrator:
         if not os.path.exists(pub_key):
             self.logger.error(f"公钥文件不存在: {pub_key}")
             return False
-        
-        cmd = f"sshpass -p '{password}' ssh-copy-id -i {pub_key} -o StrictHostKeyChecking=no {self.ssh_user}@{target_ip}"
+
+        escaped_password = shlex.quote(password)
+        cmd = f"sshpass -p {escaped_password} ssh-copy-id -i {pub_key} -o StrictHostKeyChecking=no {self.ssh_user}@{target_ip}"
         returncode, stdout, stderr = run_command(cmd, timeout=60)
         
         if returncode == 0:
@@ -121,7 +128,8 @@ class Migrator:
             (returncode, stdout, stderr)
         """
         if use_password and password:
-            cmd = f"sshpass -p '{password}' ssh -o StrictHostKeyChecking=no {self.ssh_user}@{target_ip} '{command}'"
+            escaped_password = shlex.quote(password)
+            cmd = f"sshpass -p {escaped_password} ssh -o StrictHostKeyChecking=no {self.ssh_user}@{target_ip} '{command}'"
         else:
             cmd = f"ssh -i {self.ssh_key} -o StrictHostKeyChecking=no {self.ssh_user}@{target_ip} '{command}'"
         
@@ -360,12 +368,19 @@ class Migrator:
                 self.logger.error("Rsync系统同步失败")
                 return False
 
-            # 5. 恢复网络配置（传递密码作为备用）
+            # 5. 重新配置SSH密钥（rsync会覆盖authorized_keys）
+            if password:
+                self.logger.info("重新配置SSH密钥（rsync后）...")
+                if not self.setup_ssh_key(target_ip, password):
+                    self.logger.error("重新配置SSH密钥失败")
+                    return False
+
+            # 6. 恢复网络配置（传递密码作为备用）
             if not self.restore_network_config(target_ip, password):
                 self.logger.error("恢复网络配置失败")
                 return False
-            
-            # 6. Tar Stream传输大目录
+
+            # 7. Tar Stream传输大目录
             tar_dirs = self.config['migration'].get('tar_stream_dirs', [])
             if tar_dirs:
                 if not self.tar_stream_transfer(target_ip, tar_dirs):

@@ -1,15 +1,13 @@
 {
   "version": "1.0",
-  "last_updated": "2025-11-22T03:41:41Z",
+  "last_updated": "2025-11-22T08:27:58Z",
   "servers": [
     {
       "ip": "104.248.191.16",
-      "added_date": "2025-11-21",
-      "status": "active",
-      "last_heartbeat": "2025-11-21T15:51:53Z",
-      "notes": "",
-      "lock_holder": "170.64.226.135",
-      "lock_time": "2025-11-21T15:43:46Z"
+      "added_date": "2025-11-22",
+      "status": "idle",
+      "last_heartbeat": null,
+      "notes": ""
     }
   ]
 }
