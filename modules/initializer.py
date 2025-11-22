@@ -70,12 +70,13 @@ class Initializer:
 
         return True
     
-    def update_lifecycle_on_target(self, target_ip: str, migrator) -> bool:
+    def update_lifecycle_on_target(self, target_ip: str, target_server: Dict, migrator) -> bool:
         """
-        更新目标服务器的生命周期信息
+        更新目标服务器的生命周期信息（保留迁移历史）
 
         Args:
             target_ip: 目标服务器IP
+            target_server: 目标服务器信息
             migrator: Migrator实例
 
         Returns:
@@ -83,17 +84,68 @@ class Initializer:
         """
         self.logger.info("更新目标服务器生命周期信息...")
 
+        # 读取当前（源服务器）的lifecycle，传递给目标服务器
+        import json
+        import os
+        import base64
+
+        lifecycle_file = os.path.join(self.install_path, 'data', 'lifecycle.json')
+        old_lifecycle_base64 = ""
+
+        if os.path.exists(lifecycle_file):
+            with open(lifecycle_file, 'r', encoding='utf-8') as f:
+                old_lifecycle_data = json.load(f)
+                old_lifecycle_json = json.dumps(old_lifecycle_data)
+                # 使用base64编码传递，避免shell解析问题
+                old_lifecycle_base64 = base64.b64encode(old_lifecycle_json.encode('utf-8')).decode('ascii')
+                self.logger.info(f"读取源服务器lifecycle，包含 {len(old_lifecycle_data.get('migration_history', []))} 条迁移历史")
+
+        # 使用虚拟环境的 Python，调用update-lifecycle命令
+        venv_python = f"{self.install_path}/venv/bin/python"
+
+        # 通过base64编码传递JSON，避免特殊字符问题
+        cmd = f"cd {self.install_path} && {venv_python} agent.py update-lifecycle --old-lifecycle-base64 '{old_lifecycle_base64}'"
+
+        returncode, stdout, stderr = migrator.execute_remote_command(target_ip, cmd)
+
+        if returncode == 0:
+            self.logger.info("✅ 生命周期信息已更新（保留迁移历史）")
+            return True
+        else:
+            self.logger.error(f"❌ 更新生命周期失败: {stderr}")
+            return False
+
+    def sync_from_github_on_target(self, target_ip: str, migrator, wait_seconds: int = 0) -> bool:
+        """
+        在目标服务器上从GitHub同步最新的nodes.json
+
+        Args:
+            target_ip: 目标服务器IP
+            migrator: Migrator实例
+            wait_seconds: 同步前等待的秒数（确保GitHub已更新）
+
+        Returns:
+            是否成功
+        """
+        # 如果需要等待，先等待一段时间确保GitHub已更新
+        if wait_seconds > 0:
+            self.logger.info(f"等待 {wait_seconds} 秒确保GitHub数据已更新...")
+            import time
+            time.sleep(wait_seconds)
+
+        self.logger.info("从GitHub同步最新服务器列表到目标服务器...")
+
         # 使用虚拟环境的 Python
         venv_python = f"{self.install_path}/venv/bin/python"
-        cmd = f"cd {self.install_path} && {venv_python} agent.py init"
+        cmd = f"cd {self.install_path} && {venv_python} agent.py list"
 
         returncode, _, stderr = migrator.execute_remote_command(target_ip, cmd)
 
         if returncode == 0:
-            self.logger.info("✅ 生命周期信息已更新")
+            self.logger.info("✅ 目标服务器已从GitHub同步最新数据")
             return True
         else:
-            self.logger.error(f"❌ 更新生命周期失败: {stderr}")
+            self.logger.warning(f"⚠️  GitHub同步失败（可能未启用）: {stderr}")
             return False
     
     def setup_systemd_service_on_target(self, target_ip: str, migrator) -> bool:
@@ -259,12 +311,12 @@ EOFMARKER"""
     def initialize_target_server(self, target_ip: str, target_server: Dict, migrator) -> bool:
         """
         完整初始化目标服务器
-        
+
         Args:
             target_ip: 目标服务器IP
             target_server: 目标服务器信息
             migrator: Migrator实例
-            
+
         Returns:
             是否成功
         """
@@ -273,43 +325,50 @@ EOFMARKER"""
         self.logger.info(f"目标IP: {target_ip}")
         self.logger.info(f"目标剩余天数: {target_server.get('remaining_days', 'N/A')}")
         self.logger.info("=" * 60)
-        
+
         try:
             # 1. 同步配置文件
             if not self.sync_config_to_target(target_ip, migrator):
                 return False
 
-            # 2. 更新生命周期
-            if not self.update_lifecycle_on_target(target_ip, migrator):
+            # 2. 更新生命周期（保留迁移历史）
+            if not self.update_lifecycle_on_target(target_ip, target_server, migrator):
                 return False
 
-            # 3. 配置systemd服务
+            # 3. 从GitHub同步最新的nodes.json（重启前）
+            self.sync_from_github_on_target(target_ip, migrator)
+
+            # 4. 配置systemd服务
             if not self.setup_systemd_service_on_target(target_ip, migrator):
                 return False
 
-            # 4. 创建迁移标记
+            # 5. 创建迁移标记
             if not self.create_migration_flag(target_ip, migrator):
                 return False
 
-            # 5. 重启目标服务器
+            # 6. 重启目标服务器
             if not self.reboot_target_server(target_ip, migrator):
                 return False
 
-            # 6. 等待服务器上线
+            # 7. 等待服务器上线
             startup_wait = self.config['feedback']['startup_wait']
             if not self.wait_for_target_online(target_ip, migrator, max_wait=startup_wait):
                 self.logger.warning("⚠️  服务器重启超时，可能需要手动检查")
                 return False
 
-            # 7. 验证服务状态
+            # 8. 重启后再次从GitHub同步最新数据（等待15秒确保源服务器已更新GitHub）
+            self.logger.info("重启后再次从GitHub同步最新数据...")
+            self.sync_from_github_on_target(target_ip, migrator, wait_seconds=15)
+
+            # 9. 验证服务状态
             self.verify_services_on_target(target_ip, migrator)
-            
+
             self.logger.info("=" * 60)
             self.logger.info("✅ 目标服务器初始化完成")
             self.logger.info("=" * 60)
-            
+
             return True
-            
+
         except Exception as e:
             self.logger.error(f"初始化过程中发生异常: {e}")
             return False

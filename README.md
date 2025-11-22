@@ -11,333 +11,327 @@
 - **GitHub同步**：多服务器通过 GitHub 共享服务器池
 - **零停机迁移**：Rsync 增量同步，最小化服务中断
 
-## 📦 安装
+---
+
+## 📦 从零开始部署
+
+### 步骤 1：下载项目
 
 ```bash
-cd /root/hermit_crab
-./install.sh
+cd /root
+git clone <your-repo-url> hermit_crab
+cd hermit_crab
 ```
 
-安装脚本会自动：
-- 安装系统依赖（rsync, python3, ssh 等）
-- 创建Python虚拟环境（`/root/hermit_crab/venv`）
-- 在虚拟环境中安装Python依赖
-- 配置 systemd 定时器
-
-## ⚙️ 配置
-
-所有配置在 `.env` 文件中管理：
+### 步骤 2：配置环境变量
 
 ```bash
-cd /root/hermit_crab
 cp env.example .env
 nano .env
 ```
 
-### 必需配置
+**必需配置**：
 
 ```bash
-# 业务域名（DNS会更新到新服务器）
-HERMIT_CURRENT_DOMAIN=a.ssfxx.com
+# 业务域名
+HERMIT_CURRENT_DOMAIN=a.example.com
 
-# SSH密码（必需！即使使用密钥，首次连接也需要密码）
+# 服务器寿命
+HERMIT_TOTAL_DAYS=15
+HERMIT_MIGRATE_THRESHOLD=5
+
+# SSH密码（必需！）
 HERMIT_SSH_PASSWORD=your_password
-
-# 或为每台服务器配置不同密码
-# HERMIT_SSH_PASSWORD=192.168.1.11:pass1|192.168.1.12:pass2
 ```
 
-### 可选配置
+**推荐配置**：
 
 ```bash
-# GitHub 中心化管理（推荐）
+# GitHub
 HERMIT_GITHUB_ENABLED=true
-HERMIT_GITHUB_REPO=your-username/hermit-nodes
+HERMIT_GITHUB_REPO=username/hermit-nodes
 HERMIT_GITHUB_TOKEN=ghp_xxxxx
 
-# CloudFlare DNS 自动更新（推荐）
+# CloudFlare
 HERMIT_CF_ENABLED=true
-HERMIT_CF_ZONE_ID=your_zone_id
-HERMIT_CF_TOKEN=your_cf_token
-HERMIT_CF_DOMAIN=ssfxx.com
+HERMIT_CF_ZONE_ID=xxx
+HERMIT_CF_TOKEN=xxx
+HERMIT_CF_DOMAIN=example.com
 
-# 邮件通知（推荐）
+# 邮件
 HERMIT_NOTIFICATION_ENABLED=true
-HERMIT_RESEND_API_KEY=re_xxxxxxxxxx
-HERMIT_NOTIFICATION_FROM=Hermit Crab <noreply@yourdomain.com>
-HERMIT_NOTIFICATION_TO=admin@example.com,ops@example.com
-
-# 服务器生命周期
-HERMIT_TOTAL_DAYS=15              # 服务器总生命周期（天）
-HERMIT_MIGRATE_THRESHOLD=5        # 剩余N天时触发迁移
+HERMIT_RESEND_API_KEY=re_xxxxx
+HERMIT_NOTIFICATION_FROM=HermitCrab@example.com
+HERMIT_NOTIFICATION_TO=admin@example.com
 ```
 
-## 🚀 快速开始
-
-### 1. 初始化当前服务器
+### 步骤 3：安装
 
 ```bash
-cd /root/hermit_crab
-./venv/bin/python agent.py init
-# 或使用全局命令
+chmod +x install.sh
+./install.sh
+```
+
+### 步骤 4：初始化
+
+```bash
 hermit-crab init
-# 系统自动记录当前时间，domain 从 .env 读取
 ```
 
-### 2. 添加备用服务器
+### 步骤 5：添加备用服务器
 
 ```bash
-hermit-crab add --ip 192.168.1.11
-hermit-crab add --ip 192.168.1.12 --notes "备份服务器"
-# 系统自动记录添加时间
+hermit-crab add --ip 104.248.191.16
+hermit-crab add --ip 165.227.100.50 --notes "备份"
 ```
 
-### 3. 删除服务器
+### 步骤 6：启动自动迁移
 
 ```bash
-hermit-crab remove --ip 192.168.1.11
-# 从本地和 GitHub 中删除服务器
+hermit-crab start
 ```
 
-### 4. 启用自动监控
+✅ 完成！系统会自动监控并在需要时执行迁移。
+
+---
+
+## 🎮 命令
+
+### 自动迁移控制
 
 ```bash
-systemctl enable hermit-crab.timer
-systemctl start hermit-crab.timer
-# 每小时自动检查，剩余时间不足时自动迁移
-```
+# 启动自动迁移
+hermit-crab start
 
-## 📝 常用命令
+# 停止自动迁移
+hermit-crab stop
 
-```bash
 # 查看状态
 hermit-crab status
+```
 
-# 检查是否需要迁移
-hermit-crab check
+### 服务器管理
 
-# 列出所有服务器
+```bash
+# 列出服务器
 hermit-crab list
 
 # 添加服务器
-hermit-crab add --ip 192.168.1.11 --notes "备份服务器"
+hermit-crab add --ip 192.168.1.11
+hermit-crab add --ip 192.168.1.12 --notes "备注"
 
 # 删除服务器
 hermit-crab remove --ip 192.168.1.11
+```
 
-# 手动迁移到指定服务器
+### 迁移操作
+
+```bash
+# 检查是否需要迁移
+hermit-crab check
+
+# 手动迁移
 hermit-crab migrate --target 192.168.1.11
 
-# 自动选择目标并迁移
+# 自动选择并迁移
 hermit-crab migrate --auto
 
-# 强制迁移到剩余时间最长的服务器（忽略生命周期检查）
+# 强制迁移
 hermit-crab migrate --auto --force
-
-# 守护进程模式（持续监控）
-hermit-crab daemon
-
-# 或直接使用虚拟环境Python
-cd /root/hermit_crab
-./venv/bin/python agent.py status
 ```
+
+---
+
+## 📊 状态显示
+
+运行 `hermit-crab status`：
+
+```
+============================================================
+Hermit Crab 服务器状态
+============================================================
+状态: ✅ HEALTHY
+当前IP: 170.64.226.135
+当前域名: a.example.com
+添加日期: 2025-11-22
+过期日期: 2025-12-07
+剩余天数: 14 天
+迁移次数: 0
+需要迁移: 否
+============================================================
+自动迁移状态
+============================================================
+状态: ✅ 已启动
+说明: 系统将自动监控并在需要时执行迁移
+============================================================
+```
+
+**状态**：
+- `✅ HEALTHY` - 健康
+- `⚠️ WARNING` - 警告（< 10天）
+- `🚨 CRITICAL` - 紧急（< 5天）
+- `❌ EXPIRED` - 已过期
+
+**自动迁移**：
+- `✅ 已启动` - 自动监控中
+- `❌ 未启动` - 需手动迁移
+
+---
 
 ## 🔄 工作流程
 
 ```
-服务器 A (IP: 192.168.1.10, 剩余 4 天)
-业务域名: a.ssfxx.com → 192.168.1.10
+服务器 A (剩余 4 天)
     ↓
-1. 检测到剩余天数 ≤ 阈值 (5天)
-2. 从服务器池中自动选择服务器 B (剩余 14 天)
-3. 获取分布式锁（防止多服务器同时选择）
-4. Rsync 整机克隆：A → B
-5. 更新 CloudFlare DNS: a.ssfxx.com → 192.168.1.11 ✅
-6. 初始化服务器 B，自动配置
-7. 服务器 B 启动定时监控
+检测剩余 ≤ 5 天
     ↓
-服务器 B (剩余 4 天) → 自动迁移到 C → 无限循环...
-业务域名始终是 a.ssfxx.com，只是 IP 在变化
+选择服务器 B (剩余 14 天)
+    ↓
+Rsync 克隆 A → B
+    ↓
+更新 DNS
+    ↓
+初始化 B
+    ↓
+B 接管监控
+    ↓
+无限循环...
 ```
 
-## 📊 数据结构
+---
 
-### nodes.json（服务器池）
+## 📧 邮件通知
+
+| 类型 | 触发 |
+|------|------|
+| 🔄 迁移开始 | 开始迁移 |
+| ✅ 迁移成功 | 完成迁移 |
+| ❌ 迁移失败 | 迁移出错 |
+| ⚠️ 生命周期警告 | 天数不足 |
+| 🆕 服务器添加 | 添加服务器 |
+| 🚨 无可用服务器 | 无目标 |
+
+---
+
+## 📋 服务器池
+
+**文件**：`data/nodes.json`
 
 ```json
 {
   "servers": [
     {
-      "ip": "192.168.1.10",
-      "added_date": "2025-11-21",
-      "status": "active",
-      "notes": "当前服务器"
+      "ip": "104.248.191.16",
+      "added_date": "2025-11-22",
+      "status": "active"
     },
     {
-      "ip": "192.168.1.11",
-      "added_date": "2025-11-21",
-      "status": "idle",
-      "notes": "备用服务器"
+      "ip": "165.227.100.50",
+      "added_date": "2025-11-22",
+      "status": "idle"
     }
   ]
 }
 ```
 
-- **过期时间**：自动计算 = `added_date + HERMIT_TOTAL_DAYS`
-- **唯一标识**：IP 地址
-- **状态**：`idle`（空闲）、`active`（使用中）、`transferring`（迁移中）
+**状态**：`idle`, `active`, `transferring`, `dead`
 
-## 🔐 安全说明
+---
 
-### SSH 密码配置
+## 🔐 安全
 
-**重要**：即使使用 SSH 密钥，密码也必须配置！因为首次连接新服务器需要密码认证。
+### SSH 密码
+
+**必须配置**（首次连接需要）：
 
 ```bash
-# 方式1：所有服务器相同密码
-HERMIT_SSH_PASSWORD=common_password
+# 统一密码
+HERMIT_SSH_PASSWORD=your_password
 
-# 方式2：每台服务器不同密码（推荐）
-HERMIT_SSH_PASSWORD=192.168.1.11:pass1|192.168.1.12:pass2|192.168.1.13:pass3
+# 每台不同
+HERMIT_SSH_PASSWORD=192.168.1.11:pass1|192.168.1.12:pass2
 ```
 
-### 密码自动传播
+### 排除列表
 
-`.env` 文件会随迁移自动复制到新服务器，实现密码的自动传播，无需手动配置。
+自动排除：`/proc`, `/sys`, `/dev`, `/run`, `/tmp`, `/etc/netplan`, `/boot`, `/swap`
 
-## 🛡️ 排除列表
+详见 `config/exclude_list.txt`
 
-系统自动排除以下内容（避免破坏目标服务器）：
+---
 
-- 虚拟文件系统：`/proc`, `/sys`, `/dev`
-- 网络配置：`/etc/netplan`, `/etc/network`
-- 引导文件：`/boot`, `/lib/modules`
-- 临时文件：`/tmp`, `/var/tmp`
+## 🐛 故障排除
 
-详见：`config/exclude_list.txt`
-
-## 📧 邮件通知
-
-Hermit Crab 支持使用 [Resend](https://resend.com) API 发送实时邮件通知，让你随时了解迁移状态。
-
-### 配置邮件通知
-
-1. **获取 Resend API Key**
-   - 访问 https://resend.com 注册账号
-   - 在 https://resend.com/api-keys 创建 API Key
-   - 验证你的发件域名
-
-2. **配置 .env 文件**
-   ```bash
-   HERMIT_NOTIFICATION_ENABLED=true
-   HERMIT_RESEND_API_KEY=re_xxxxxxxxxxxxxxxxxxxxxxxxxx
-   HERMIT_NOTIFICATION_FROM=Hermit Crab <noreply@yourdomain.com>
-   HERMIT_NOTIFICATION_TO=admin@example.com,ops@example.com
-   ```
-
-### 通知场景
-
-系统会在以下情况自动发送邮件：
-
-| 通知类型 | 触发条件 | 邮件主题示例 |
-|---------|---------|------------|
-| 🔄 迁移开始 | 开始执行迁移流程 | `🔄 [Hermit Crab] 迁移开始 - 192.168.1.10 → 192.168.1.11` |
-| ✅ 迁移成功 | 迁移完成并成功 | `✅ [Hermit Crab] 迁移成功 - 192.168.1.10 → 192.168.1.11` |
-| ❌ 迁移失败 | 迁移过程中出错 | `❌ [Hermit Crab] 迁移失败 - 192.168.1.10` |
-| ⚠️ 生命周期警告 | 剩余天数不足 | `⚠️ [Hermit Crab] 服务器剩余 4 天 - 192.168.1.10` |
-| 🆕 服务器添加 | 添加新服务器 | `🆕 [Hermit Crab] 新服务器已添加 - 192.168.1.11` |
-| 🚨 无可用服务器 | 找不到合适目标 | `🚨 [Hermit Crab] 无可用服务器 - 剩余 4 天` |
-
-### 邮件内容
-
-所有邮件都采用精美的 HTML 模板，包含：
-- 📊 详细的迁移信息表格
-- 🎨 彩色状态指示器
-- ⏱️ 时间戳和耗时统计
-- 💡 操作建议和错误信息
-- 📱 移动端友好的响应式设计
-
-### 测试邮件通知
+### 日志
 
 ```bash
-# 查看通知状态（启动时会显示）
-hermit-crab status
+# 主日志
+tail -f /root/hermit_crab/logs/hermit_crab.log
 
-# 测试添加服务器（会发送通知）
-hermit-crab add --ip 192.168.1.100 --notes "测试服务器"
-```
-
-## 📋 迁移日志
-
-每次迁移会生成独立的详细日志文件：
-
-```bash
-# 日志位置
-/root/hermit_crab/logs/migrations/migration_YYYYMMDD_HHMMSS.log
-
-# 日志内容包括
-- 迁移开始/结束时间
-- 源服务器和目标服务器信息
-- SSH 连接测试详情
-- 文件传输统计（每100个文件记录一次）
-- DNS 更新记录
-- 错误和警告信息
-- 总耗时统计
-
-# 查看最近的迁移日志
-ls -lt /root/hermit_crab/logs/migrations/ | head -5
+# 迁移日志
 tail -f /root/hermit_crab/logs/migrations/migration_*.log
+
+# 系统日志
+journalctl -u hermit-crab-daemon.service -f
 ```
 
-**注意**：Rsync 传输进度实时显示在终端，但不完整记录到日志文件（避免日志文件过大）。
+### 常见问题
 
-## 🐛 调试模式
-
+**自动迁移没执行？**
 ```bash
-# 在 .env 中设置
-HERMIT_DEBUG=true
-HERMIT_DRY_RUN=true       # 测试模式，不实际执行迁移
-HERMIT_SKIP_REBOOT=true   # 跳过重启
+hermit-crab status
+hermit-crab start
 ```
 
-## 📖 环境变量完整列表
+**SSH 连接失败？**
+```bash
+grep HERMIT_SSH_PASSWORD .env
+ssh root@目标IP
+```
 
-查看 `env.example` 了解所有可配置项。
+**迁移卡住？**
+```bash
+journalctl -u hermit-crab-daemon.service -f
+df -h
+```
 
-### 基本配置
-- `HERMIT_CURRENT_DOMAIN` - 业务域名
-- `HERMIT_LOG_LEVEL` - 日志级别 (DEBUG/INFO/WARNING/ERROR)
+---
+
+## 📖 环境变量
+
+### 基本
+- `HERMIT_CURRENT_DOMAIN` - 域名
+- `HERMIT_LOG_LEVEL` - 日志级别
 
 ### 生命周期
-- `HERMIT_TOTAL_DAYS` - 服务器总生命周期（天）
-- `HERMIT_MIGRATE_THRESHOLD` - 触发迁移阈值（天）
-- `HERMIT_CHECK_INTERVAL` - 检查间隔（秒）
+- `HERMIT_TOTAL_DAYS` - 总寿命（天）
+- `HERMIT_MIGRATE_THRESHOLD` - 迁移阈值（天）
 
 ### GitHub
-- `HERMIT_GITHUB_ENABLED` - 是否启用
-- `HERMIT_GITHUB_REPO` - 仓库名（username/repo）
-- `HERMIT_GITHUB_TOKEN` - API Token
+- `HERMIT_GITHUB_ENABLED` - 启用
+- `HERMIT_GITHUB_REPO` - 仓库
+- `HERMIT_GITHUB_TOKEN` - Token
 
 ### CloudFlare
-- `HERMIT_CF_ENABLED` - 是否启用
+- `HERMIT_CF_ENABLED` - 启用
 - `HERMIT_CF_ZONE_ID` - Zone ID
-- `HERMIT_CF_TOKEN` - API Token
-- `HERMIT_CF_DOMAIN` - 域名后缀
+- `HERMIT_CF_TOKEN` - Token
+- `HERMIT_CF_DOMAIN` - 域名
 
-### 邮件通知
-- `HERMIT_NOTIFICATION_ENABLED` - 是否启用邮件通知
-- `HERMIT_RESEND_API_KEY` - Resend API Key
-- `HERMIT_NOTIFICATION_FROM` - 发件人邮箱
-- `HERMIT_NOTIFICATION_TO` - 收件人邮箱（逗号分隔）
+### 邮件
+- `HERMIT_NOTIFICATION_ENABLED` - 启用
+- `HERMIT_RESEND_API_KEY` - API Key
+- `HERMIT_NOTIFICATION_FROM` - 发件人
+- `HERMIT_NOTIFICATION_TO` - 收件人
 
 ### SSH
-- `HERMIT_SSH_USER` - SSH 用户名（默认 root）
-- `HERMIT_SSH_PASSWORD` - SSH 密码
-- `HERMIT_SSH_KEY_PATH` - SSH 私钥路径
+- `HERMIT_SSH_USER` - 用户
+- `HERMIT_SSH_PASSWORD` - 密码
+- `HERMIT_SSH_KEY_PATH` - 密钥
 
-### Rsync
-- `HERMIT_RSYNC_BANDWIDTH_LIMIT` - 带宽限制（KB/s，0=不限制）
-- `HERMIT_RSYNC_TIMEOUT` - 超时时间（秒）
+查看 `env.example` 了解所有配置。
+
+---
 
 ## 🔧 卸载
 
@@ -345,17 +339,12 @@ HERMIT_SKIP_REBOOT=true   # 跳过重启
 ./uninstall.sh
 ```
 
-**注意**：Python依赖包会随虚拟环境自动删除，无需手动卸载。
+---
 
 ## 📄 License
 
 MIT
 
-## 🤝 Contributing
-
-欢迎提交 Issue 和 Pull Request！
-
 ---
 
-**注意**：本系统适合短期VPS的无缝迁移场景，不建议用于生产环境的关键业务。
-
+**注意**：适合短期VPS迁移，不建议生产关键业务使用。

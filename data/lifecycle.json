@@ -3,12 +3,12 @@
   "total_days": 15,
   "current_ip": "170.64.226.135",
   "current_domain": "a.ssfxx.com",
-  "initialized_at": "2025-11-12T12:27:03.399574",
+  "initialized_at": "2025-11-21T15:51:15.685528",
   "migration_history": [
     {
-      "timestamp": "2025-11-12T12:28:55.569700",
-      "target_ip": "104.248.191.16",
-      "remaining_days": 14
+      "timestamp": "2025-11-22T15:56:32.250295",
+      "target_ip": "159.65.104.203",
+      "remaining_days": 4
     }
   ]
 }

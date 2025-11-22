@@ -122,10 +122,46 @@ class Monitor:
             self.logger.info(f"剩余时间 {remaining} 天，暂不需要迁移")
             return False
     
+    def update_lifecycle_for_migration(self, target_server: Dict, old_lifecycle: Optional[Dict] = None):
+        """
+        迁移后更新生命周期信息（保留迁移历史）
+
+        Args:
+            target_server: 目标服务器信息（包含ip, added_date等）
+            old_lifecycle: 源服务器的生命周期信息（可选，用于继承迁移历史）
+
+        Returns:
+            更新后的生命周期信息
+        """
+        # 从目标服务器信息获取添加日期
+        added_date = target_server.get('added_date', format_date())
+        total_days = self.config['lifecycle']['total_days']
+
+        # 继承旧的迁移历史（如果提供）
+        migration_history = []
+        if old_lifecycle:
+            migration_history = old_lifecycle.get('migration_history', [])
+
+        lifecycle_info = {
+            'added_date': added_date,
+            'total_days': total_days,
+            'current_ip': get_current_ip(),
+            'current_domain': self.config['base'].get('current_domain', ''),
+            'initialized_at': datetime.now().isoformat(),
+            'migration_history': migration_history  # 保留历史
+        }
+
+        # 保存到文件
+        with open(self.lifecycle_file, 'w', encoding='utf-8') as f:
+            json.dump(lifecycle_info, f, indent=2, ensure_ascii=False)
+
+        self.logger.info(f"生命周期已更新: IP={lifecycle_info['current_ip']}, 保留了 {len(migration_history)} 条迁移历史")
+        return lifecycle_info
+
     def add_migration_record(self, target_server: Dict):
         """
         添加迁移记录
-        
+
         Args:
             target_server: 目标服务器信息
         """
@@ -133,19 +169,19 @@ class Monitor:
         if lifecycle is None:
             self.logger.error("无法添加迁移记录：生命周期未初始化")
             return
-        
+
         record = {
             'timestamp': datetime.now().isoformat(),
             'target_ip': target_server.get('ip'),
             'remaining_days': self.get_remaining_days()
         }
-        
+
         lifecycle['migration_history'].append(record)
-        
+
         # 保存
         with open(self.lifecycle_file, 'w', encoding='utf-8') as f:
             json.dump(lifecycle, f, indent=2, ensure_ascii=False)
-        
+
         self.logger.info(f"迁移记录已添加: {target_server.get('ip')}")
     
     def get_status(self) -> Dict:

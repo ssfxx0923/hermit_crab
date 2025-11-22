@@ -1,7 +1,12 @@
 {
-  "version": "1.0",
-  "last_updated": "2025-11-22T12:43:54Z",
   "servers": [
+    {
+      "ip": "159.65.104.203",
+      "added_date": "2025-11-22",
+      "status": "idle",
+      "last_heartbeat": null,
+      "notes": ""
+    },
     {
       "ip": "104.248.191.16",
       "added_date": "2025-11-22",
@@ -9,5 +14,6 @@
       "last_heartbeat": null,
       "notes": ""
     }
-  ]
+  ],
+  "last_updated": "2025-11-22T15:54:12Z"
 }

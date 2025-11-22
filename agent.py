@@ -64,7 +64,7 @@ class HermitCrabAgent:
     def cmd_init(self):
         """
         初始化生命周期
-        
+
         系统会自动：
         - 记录当前时间戳作为添加日期
         - 从 config.yaml 读取 current_domain
@@ -72,21 +72,107 @@ class HermitCrabAgent:
         self.logger.info("=" * 60)
         self.logger.info("初始化 Hermit Crab")
         self.logger.info("=" * 60)
-        
+
         # 初始化生命周期（系统自动记录当前时间）
         lifecycle = self.monitor.initialize_lifecycle()
-        
+
         # 显示当前域名（从配置读取）
         current_domain = self.config['base']['current_domain']
         self.logger.info(f"业务域名: {current_domain}")
-        
+
         self.logger.info("✅ 初始化完成")
         self.monitor.display_status()
+
+    def cmd_update_lifecycle(self, target_server_ip: str = None, old_lifecycle_json: str = None, old_lifecycle_base64: str = None):
+        """
+        迁移后更新生命周期（保留迁移历史）
+
+        Args:
+            target_server_ip: 当前服务器IP（用于查找服务器信息）
+            old_lifecycle_json: 源服务器的lifecycle.json内容（JSON字符串）
+            old_lifecycle_base64: 源服务器的lifecycle.json内容（base64编码）
+        """
+        self.logger.info("=" * 60)
+        self.logger.info("更新生命周期（保留迁移历史）")
+        self.logger.info("=" * 60)
+
+        # 获取当前IP
+        current_ip = get_current_ip()
+        self.logger.info(f"当前服务器IP: {current_ip}")
+
+        # 从GitHub或本地获取服务器信息
+        if self.github.is_available():
+            self.logger.info("从GitHub同步服务器列表...")
+            nodes_data = self.github.pull_nodes()
+            if nodes_data:
+                self.scanner.save_nodes(nodes_data)
+
+        # 查找当前服务器信息
+        nodes_data = self.scanner.load_nodes()
+        target_server = None
+        for server in nodes_data.get('servers', []):
+            if server.get('ip') == current_ip:
+                target_server = server
+                break
+
+        if not target_server:
+            self.logger.error(f"❌ 未找到当前服务器信息: {current_ip}")
+            return False
+
+        # 解析旧的lifecycle
+        old_lifecycle = None
+
+        # 优先使用base64编码的参数
+        if old_lifecycle_base64:
+            import base64
+            import json
+            try:
+                decoded_json = base64.b64decode(old_lifecycle_base64).decode('utf-8')
+                old_lifecycle = json.loads(decoded_json)
+                self.logger.info(f"成功解码base64 lifecycle数据")
+            except Exception as e:
+                self.logger.warning(f"解码base64 lifecycle失败: {e}")
+        elif old_lifecycle_json:
+            import json
+            try:
+                old_lifecycle = json.loads(old_lifecycle_json)
+            except Exception as e:
+                self.logger.warning(f"解析旧lifecycle失败: {e}")
+
+        # 更新生命周期
+        self.monitor.update_lifecycle_for_migration(target_server, old_lifecycle)
+
+        self.logger.info("✅ 生命周期更新完成")
+        self.monitor.display_status()
+        return True
     
     def cmd_status(self):
         """显示当前状态"""
         self.monitor.display_status()
-        
+
+        # 显示自动迁移状态
+        import subprocess
+        try:
+            result = subprocess.run(
+                ["systemctl", "is-active", "hermit-crab-daemon.service"],
+                capture_output=True, text=True, check=False
+            )
+            is_active = result.stdout.strip() == "active"
+
+            self.logger.info("=" * 60)
+            self.logger.info("自动迁移状态")
+            self.logger.info("=" * 60)
+            if is_active:
+                self.logger.info("状态: ✅ 已启动")
+                self.logger.info("说明: 系统将自动监控并在需要时执行迁移")
+            else:
+                self.logger.info("状态: ❌ 未启动")
+                self.logger.info("说明: 需要手动执行迁移")
+                self.logger.info("提示: 使用 'hermit-crab start' 启动自动迁移")
+            self.logger.info("=" * 60)
+        except Exception as e:
+            self.logger.debug(f"无法检查daemon状态: {e}")
+
         # 如果启用了GitHub，显示服务器列表
         if self.github.is_available():
             self.logger.info("\n正在从GitHub同步服务器列表...")
@@ -94,7 +180,7 @@ class HermitCrabAgent:
             if nodes_data:
                 # 保存到本地
                 self.scanner.save_nodes(nodes_data)
-        
+
         self.logger.info("\n可用服务器列表:")
         self.scanner.list_servers()
     
@@ -297,14 +383,17 @@ class HermitCrabAgent:
                     self.github.release_lock(target_ip, 'idle')
                 return False
 
-            # 7. 初始化目标服务器
+            # 7. 记录迁移历史（在初始化目标服务器之前，这样可以传递迁移历史）
+            self.monitor.add_migration_record(target_server)
+
+            # 8. 初始化目标服务器
             init_success = self.initializer.initialize_target_server(target_ip, target_server, self.migrator)
             if not init_success:
                 self.logger.error("❌ 目标服务器初始化失败")
                 # 但 Rsync 已经成功，标记为部分成功
                 self.logger.warning("⚠️  迁移主体完成但初始化失败，需要手动完成初始化")
 
-            # 8. 更新DNS（如果启用）
+            # 9. 更新DNS（如果启用）
             if self.cloudflare.is_available():
                 current_subdomain = self.config['base']['current_domain'].split('.')[0]
                 self.logger.info(f"更新DNS: {current_subdomain} -> {target_ip}")
@@ -339,9 +428,6 @@ class HermitCrabAgent:
                 servers = [s for s in servers if s.get('ip') != current_ip]
                 nodes_data['servers'] = servers
                 self.scanner.save_nodes(nodes_data)
-
-            # 10. 记录迁移历史
-            self.monitor.add_migration_record(target_server)
 
             # 计算总耗时
             migrate_end_time = datetime.now()
@@ -454,20 +540,28 @@ class HermitCrabAgent:
         self.logger.info("=" * 60)
         self.logger.info("Hermit Crab 守护进程启动")
         self.logger.info("=" * 60)
-        
+
         check_interval = self.config['lifecycle']['check_interval']
-        
+
         while True:
             try:
                 self.logger.info(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 执行检查...")
-                
+
+                # 首先从GitHub同步最新的服务器状态
+                if self.github.is_available():
+                    self.logger.debug("从GitHub同步最新服务器列表...")
+                    nodes_data = self.github.pull_nodes()
+                    if nodes_data:
+                        self.scanner.save_nodes(nodes_data)
+                        self.logger.debug("✅ 服务器列表已更新")
+
                 # 检查是否需要迁移
                 if self.cmd_check():
                     self.logger.warning("检测到需要迁移，开始自动迁移...")
-                    
+
                     # 自动迁移
                     success = self.cmd_migrate(auto=True)
-                    
+
                     if success:
                         self.logger.info("=" * 60)
                         self.logger.info("自动迁移成功！源服务器开始退役流程...")
@@ -496,10 +590,10 @@ class HermitCrabAgent:
                         break
                     else:
                         self.logger.error("自动迁移失败，将在下次检查时重试")
-                
+
                 self.logger.info(f"下次检查时间: {check_interval}秒后")
                 time.sleep(check_interval)
-                
+
             except KeyboardInterrupt:
                 self.logger.info("\n收到退出信号，守护进程停止")
                 break
@@ -514,9 +608,85 @@ class HermitCrabAgent:
             nodes_data = self.github.pull_nodes()
             if nodes_data:
                 self.scanner.save_nodes(nodes_data)
-        
+
         self.scanner.list_servers()
-    
+
+    def cmd_start(self):
+        """启动自动迁移"""
+        import subprocess
+
+        self.logger.info("=" * 60)
+        self.logger.info("启动自动迁移")
+        self.logger.info("=" * 60)
+
+        try:
+            # 检查当前状态
+            result = subprocess.run(
+                ["systemctl", "is-active", "hermit-crab-daemon.service"],
+                capture_output=True, text=True, check=False
+            )
+            is_active = result.stdout.strip() == "active"
+
+            if is_active:
+                self.logger.info("✅ 自动迁移已在运行中")
+                return
+
+            # 启动服务
+            self.logger.info("正在启动 hermit-crab-daemon 服务...")
+            subprocess.run(
+                ["systemctl", "enable", "--now", "hermit-crab-daemon.service"],
+                check=True, capture_output=True
+            )
+
+            self.logger.info("✅ 自动迁移已启动")
+            self.logger.info("系统将持续监控服务器状态并在需要时自动执行迁移")
+            self.logger.info("=" * 60)
+
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"❌ 启动失败: {e}")
+            sys.exit(1)
+        except Exception as e:
+            self.logger.error(f"❌ 启动异常: {e}")
+            sys.exit(1)
+
+    def cmd_stop(self):
+        """停止自动迁移"""
+        import subprocess
+
+        self.logger.info("=" * 60)
+        self.logger.info("停止自动迁移")
+        self.logger.info("=" * 60)
+
+        try:
+            # 检查当前状态
+            result = subprocess.run(
+                ["systemctl", "is-active", "hermit-crab-daemon.service"],
+                capture_output=True, text=True, check=False
+            )
+            is_active = result.stdout.strip() == "active"
+
+            if not is_active:
+                self.logger.info("✅ 自动迁移未在运行")
+                return
+
+            # 停止服务
+            self.logger.info("正在停止 hermit-crab-daemon 服务...")
+            subprocess.run(
+                ["systemctl", "disable", "--now", "hermit-crab-daemon.service"],
+                check=True, capture_output=True
+            )
+
+            self.logger.info("✅ 自动迁移已停止")
+            self.logger.info("需要手动执行 'hermit-crab migrate' 进行迁移")
+            self.logger.info("=" * 60)
+
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"❌ 停止失败: {e}")
+            sys.exit(1)
+        except Exception as e:
+            self.logger.error(f"❌ 停止异常: {e}")
+            sys.exit(1)
+
     def cmd_add_server(self, ip: str, notes: str = ""):
         """
         添加新服务器
@@ -633,7 +803,13 @@ def main():
     
     # init命令
     init_parser = subparsers.add_parser('init', help='初始化生命周期（系统自动记录时间）')
-    
+
+    # update-lifecycle命令（迁移后使用）
+    update_lifecycle_parser = subparsers.add_parser('update-lifecycle', help='迁移后更新生命周期（保留历史）')
+    update_lifecycle_parser.add_argument('--target-ip', help='目标服务器IP（可选）')
+    update_lifecycle_parser.add_argument('--old-lifecycle', help='源服务器的lifecycle JSON（可选）')
+    update_lifecycle_parser.add_argument('--old-lifecycle-base64', help='源服务器的lifecycle base64编码（可选）')
+
     # status命令
     subparsers.add_parser('status', help='显示当前状态')
     
@@ -653,7 +829,13 @@ def main():
     
     # daemon命令
     subparsers.add_parser('daemon', help='守护进程模式')
-    
+
+    # start命令
+    subparsers.add_parser('start', help='启动自动迁移')
+
+    # stop命令
+    subparsers.add_parser('stop', help='停止自动迁移')
+
     # list命令
     subparsers.add_parser('list', help='列出所有服务器')
 
@@ -679,6 +861,8 @@ def main():
     try:
         if args.command == 'init':
             agent.cmd_init()
+        elif args.command == 'update-lifecycle':
+            agent.cmd_update_lifecycle(args.target_ip, args.old_lifecycle, args.old_lifecycle_base64)
         elif args.command == 'status':
             agent.cmd_status()
         elif args.command == 'check':
@@ -689,6 +873,10 @@ def main():
             agent.cmd_feedback(args.source)
         elif args.command == 'daemon':
             agent.cmd_daemon()
+        elif args.command == 'start':
+            agent.cmd_start()
+        elif args.command == 'stop':
+            agent.cmd_stop()
         elif args.command == 'list':
             agent.cmd_list()
         elif args.command == 'add':
