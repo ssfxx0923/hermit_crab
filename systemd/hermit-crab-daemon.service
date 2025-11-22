@@ -11,7 +11,8 @@ EnvironmentFile=/root/hermit_crab/.env
 ExecStart=/root/hermit_crab/venv/bin/python /root/hermit_crab/agent.py daemon
 
 # 自动重启配置
-Restart=always
+# 只在异常退出时重启，迁移成功后正常退出不重启
+Restart=on-failure
 RestartSec=60
 
 # 日志配置

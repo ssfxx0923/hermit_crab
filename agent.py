@@ -469,8 +469,30 @@ class HermitCrabAgent:
                     success = self.cmd_migrate(auto=True)
                     
                     if success:
-                        self.logger.info("自动迁移成功！")
-                        # 迁移成功后退出守护进程（因为已经转移到新服务器）
+                        self.logger.info("=" * 60)
+                        self.logger.info("自动迁移成功！源服务器开始退役流程...")
+                        self.logger.info("=" * 60)
+
+                        # 迁移成功后，源服务器应该停止服务并退役
+                        # 避免 systemd 自动重启后再次触发迁移
+                        try:
+                            import subprocess
+
+                            self.logger.info("正在停止 hermit-crab-daemon 服务...")
+                            subprocess.run(["systemctl", "stop", "hermit-crab-daemon.service"],
+                                         check=False, capture_output=True)
+
+                            self.logger.info("正在禁用 hermit-crab-daemon 服务...")
+                            subprocess.run(["systemctl", "disable", "hermit-crab-daemon.service"],
+                                         check=False, capture_output=True)
+
+                            self.logger.info("✅ 源服务器已退役，不再执行监控任务")
+                            self.logger.info("新服务器将接管所有服务")
+
+                        except Exception as e:
+                            self.logger.error(f"停止服务时出错: {e}")
+
+                        # 退出守护进程
                         break
                     else:
                         self.logger.error("自动迁移失败，将在下次检查时重试")
