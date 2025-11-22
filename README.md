@@ -6,6 +6,7 @@
 
 - **自动整机迁移**：服务器即将到期时自动迁移到新服务器
 - **DNS自动切换**：迁移完成后自动更新 CloudFlare DNS
+- **邮件实时通知**：使用 Resend API 发送迁移状态通知
 - **无限迁移链**：A → B → C → D... 无限循环
 - **GitHub同步**：多服务器通过 GitHub 共享服务器池
 - **零停机迁移**：Rsync 增量同步，最小化服务中断
@@ -59,6 +60,12 @@ HERMIT_CF_ENABLED=true
 HERMIT_CF_ZONE_ID=your_zone_id
 HERMIT_CF_TOKEN=your_cf_token
 HERMIT_CF_DOMAIN=ssfxx.com
+
+# 邮件通知（推荐）
+HERMIT_NOTIFICATION_ENABLED=true
+HERMIT_RESEND_API_KEY=re_xxxxxxxxxx
+HERMIT_NOTIFICATION_FROM=Hermit Crab <noreply@yourdomain.com>
+HERMIT_NOTIFICATION_TO=admin@example.com,ops@example.com
 
 # 服务器生命周期
 HERMIT_TOTAL_DAYS=15              # 服务器总生命周期（天）
@@ -209,6 +216,57 @@ HERMIT_SSH_PASSWORD=192.168.1.11:pass1|192.168.1.12:pass2|192.168.1.13:pass3
 
 详见：`config/exclude_list.txt`
 
+## 📧 邮件通知
+
+Hermit Crab 支持使用 [Resend](https://resend.com) API 发送实时邮件通知，让你随时了解迁移状态。
+
+### 配置邮件通知
+
+1. **获取 Resend API Key**
+   - 访问 https://resend.com 注册账号
+   - 在 https://resend.com/api-keys 创建 API Key
+   - 验证你的发件域名
+
+2. **配置 .env 文件**
+   ```bash
+   HERMIT_NOTIFICATION_ENABLED=true
+   HERMIT_RESEND_API_KEY=re_xxxxxxxxxxxxxxxxxxxxxxxxxx
+   HERMIT_NOTIFICATION_FROM=Hermit Crab <noreply@yourdomain.com>
+   HERMIT_NOTIFICATION_TO=admin@example.com,ops@example.com
+   ```
+
+### 通知场景
+
+系统会在以下情况自动发送邮件：
+
+| 通知类型 | 触发条件 | 邮件主题示例 |
+|---------|---------|------------|
+| 🔄 迁移开始 | 开始执行迁移流程 | `🔄 [Hermit Crab] 迁移开始 - 192.168.1.10 → 192.168.1.11` |
+| ✅ 迁移成功 | 迁移完成并成功 | `✅ [Hermit Crab] 迁移成功 - 192.168.1.10 → 192.168.1.11` |
+| ❌ 迁移失败 | 迁移过程中出错 | `❌ [Hermit Crab] 迁移失败 - 192.168.1.10` |
+| ⚠️ 生命周期警告 | 剩余天数不足 | `⚠️ [Hermit Crab] 服务器剩余 4 天 - 192.168.1.10` |
+| 🆕 服务器添加 | 添加新服务器 | `🆕 [Hermit Crab] 新服务器已添加 - 192.168.1.11` |
+| 🚨 无可用服务器 | 找不到合适目标 | `🚨 [Hermit Crab] 无可用服务器 - 剩余 4 天` |
+
+### 邮件内容
+
+所有邮件都采用精美的 HTML 模板，包含：
+- 📊 详细的迁移信息表格
+- 🎨 彩色状态指示器
+- ⏱️ 时间戳和耗时统计
+- 💡 操作建议和错误信息
+- 📱 移动端友好的响应式设计
+
+### 测试邮件通知
+
+```bash
+# 查看通知状态（启动时会显示）
+hermit-crab status
+
+# 测试添加服务器（会发送通知）
+hermit-crab add --ip 192.168.1.100 --notes "测试服务器"
+```
+
 ## 📋 迁移日志
 
 每次迁移会生成独立的详细日志文件：
@@ -265,6 +323,12 @@ HERMIT_SKIP_REBOOT=true   # 跳过重启
 - `HERMIT_CF_ZONE_ID` - Zone ID
 - `HERMIT_CF_TOKEN` - API Token
 - `HERMIT_CF_DOMAIN` - 域名后缀
+
+### 邮件通知
+- `HERMIT_NOTIFICATION_ENABLED` - 是否启用邮件通知
+- `HERMIT_RESEND_API_KEY` - Resend API Key
+- `HERMIT_NOTIFICATION_FROM` - 发件人邮箱
+- `HERMIT_NOTIFICATION_TO` - 收件人邮箱（逗号分隔）
 
 ### SSH
 - `HERMIT_SSH_USER` - SSH 用户名（默认 root）

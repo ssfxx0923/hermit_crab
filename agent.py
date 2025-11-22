@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from modules import (
     Logger, get_config, get_current_ip,
     Monitor, Scanner, Migrator, Initializer,
-    GitHubSync, CloudFlareAPI, get_ssh_password
+    GitHubSync, CloudFlareAPI, ResendNotifier, get_ssh_password
 )
 
 
@@ -51,8 +51,15 @@ class HermitCrabAgent:
         self.initializer = Initializer(self.config)
         self.github = GitHubSync(self.config)
         self.cloudflare = CloudFlareAPI(self.config)
-        
+        self.notifier = ResendNotifier(self.config)
+
         self.logger.info("Hermit Crab Agent 已启动")
+
+        # 显示通知状态
+        if self.notifier.is_available():
+            self.logger.info(f"✅ 邮件通知已启用 -> {', '.join(self.config['notification']['to_emails'])}")
+        else:
+            self.logger.debug("邮件通知未启用")
     
     def cmd_init(self):
         """
@@ -98,21 +105,31 @@ class HermitCrabAgent:
         self.logger.info("=" * 60)
         self.logger.info("执行迁移检查")
         self.logger.info("=" * 60)
-        
+
         # 检查生命周期
         status = self.monitor.get_status()
-        
+
         if not status['initialized']:
             self.logger.error("❌ 生命周期未初始化，请先运行: agent.py init")
             return False
-        
+
         self.logger.info(f"当前服务器剩余: {status['remaining_days']} 天")
-        
+
         if not status['should_migrate']:
             self.logger.info("✅ 暂不需要迁移")
             return False
-        
+
         self.logger.warning("🚨 需要执行迁移！")
+
+        # 发送生命周期警告通知
+        current_ip = get_current_ip()
+        self.notifier.notify_lifecycle_warning(
+            server_ip=current_ip,
+            remaining_days=status['remaining_days'],
+            total_days=self.config['lifecycle']['total_days'],
+            domain=self.config['base']['current_domain']
+        )
+
         return True
     
     def cmd_migrate(self, target_ip: str = None, password: str = None, auto: bool = False, force: bool = False):
@@ -197,6 +214,13 @@ class HermitCrabAgent:
 
                 if target_server is None:
                     self.logger.error("❌ 没有合适的目标服务器")
+
+                    # 发送无可用服务器通知
+                    self.notifier.notify_no_available_servers(
+                        current_ip=current_ip,
+                        remaining_days=current_remaining
+                    )
+
                     return False
 
                 target_ip = target_server['ip']
@@ -250,8 +274,24 @@ class HermitCrabAgent:
             migrate_start_time = datetime.now()
             self.logger.info(f"迁移开始时间: {migrate_start_time.strftime('%Y-%m-%d %H:%M:%S')}")
 
+            # 发送迁移开始通知
+            self.notifier.notify_migration_started(
+                source_ip=current_ip,
+                target_ip=target_ip,
+                remaining_days=current_remaining
+            )
+
             if not self.migrator.perform_migration(target_ip, password):
                 self.logger.error("❌ 迁移失败")
+
+                # 发送迁移失败通知
+                self.notifier.notify_migration_failed(
+                    source_ip=current_ip,
+                    target_ip=target_ip,
+                    error_message="Rsync 迁移失败，请查看日志了解详情",
+                    stage="数据传输"
+                )
+
                 # 释放锁
                 if self.github.is_available():
                     self.github.release_lock(target_ip, 'idle')
@@ -307,6 +347,14 @@ class HermitCrabAgent:
             migrate_end_time = datetime.now()
             total_elapsed = (migrate_end_time - migrate_start_time).total_seconds()
 
+            # 发送迁移成功通知
+            self.notifier.notify_migration_success(
+                source_ip=current_ip,
+                target_ip=target_ip,
+                duration_seconds=total_elapsed,
+                domain=self.config['base']['current_domain']
+            )
+
             self.logger.info("=" * 60)
             self.logger.info("🎉 迁移流程全部完成！")
             self.logger.info("=" * 60)
@@ -324,6 +372,15 @@ class HermitCrabAgent:
             self.logger.error(f"迁移异常: {e}")
             import traceback
             self.logger.error(traceback.format_exc())
+
+            # 发送迁移失败通知
+            self.notifier.notify_migration_failed(
+                source_ip=current_ip,
+                target_ip=target_ip if target_ip else None,
+                error_message=str(e),
+                stage="执行异常"
+            )
+
             # 释放锁
             if self.github.is_available():
                 self.github.release_lock(target_ip, 'idle')
@@ -461,6 +518,20 @@ class HermitCrabAgent:
                     self.logger.info("✅ 已同步到GitHub")
                 else:
                     self.logger.warning("⚠️  GitHub同步失败")
+
+            # 计算过期日期
+            from datetime import datetime, timedelta
+            added_date = datetime.now()
+            total_days = self.config['lifecycle']['total_days']
+            expire_date = (added_date + timedelta(days=total_days)).strftime('%Y-%m-%d')
+
+            # 发送服务器添加通知
+            self.notifier.notify_server_added(
+                server_ip=ip,
+                added_by="管理员",
+                notes=notes,
+                expire_date=expire_date
+            )
 
             return True
         else:

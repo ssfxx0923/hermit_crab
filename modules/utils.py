@@ -183,6 +183,16 @@ def get_config() -> Dict[str, Any]:
             'max_retry': 10,
             'retry_interval': 300,
         },
+        'notification': {
+            'enabled': get_env_bool('HERMIT_NOTIFICATION_ENABLED', False),
+            'resend_api_key': get_env('HERMIT_RESEND_API_KEY', ''),
+            'from_email': get_env('HERMIT_NOTIFICATION_FROM', ''),
+            'to_emails': [
+                email.strip()
+                for email in get_env('HERMIT_NOTIFICATION_TO', '').split(',')
+                if email.strip()
+            ],
+        },
         'debug': {
             'enabled': get_env_bool('HERMIT_DEBUG', False),
             'dry_run': get_env_bool('HERMIT_DRY_RUN', False),

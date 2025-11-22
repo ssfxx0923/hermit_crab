@@ -12,6 +12,7 @@ from .migrator import Migrator
 from .initializer import Initializer
 from .github_sync import GitHubSync
 from .cloudflare_api import CloudFlareAPI
+from .notification import ResendNotifier
 from .utils import Logger, get_config, get_current_ip, load_env, get_ssh_password
 
 __all__ = [
@@ -21,6 +22,7 @@ __all__ = [
     'Initializer',
     'GitHubSync',
     'CloudFlareAPI',
+    'ResendNotifier',
     'Logger',
     'get_config',
     'get_current_ip',
