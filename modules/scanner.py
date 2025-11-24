@@ -63,28 +63,38 @@ class Scanner:
         except Exception as e:
             self.logger.error(f"保存服务器列表失败: {e}")
     
-    def get_available_servers(self, exclude_status: List[str] = None) -> List[Dict]:
+    def get_available_servers(self, exclude_status: List[str] = None, exclude_current: bool = True) -> List[Dict]:
         """
         获取可用服务器列表
-        
+
         Args:
             exclude_status: 需要排除的状态列表
-            
+            exclude_current: 是否排除当前服务器（默认True）
+
         Returns:
             可用服务器列表
         """
         if exclude_status is None:
             exclude_status = ['transferring', 'dead']
-        
+
         nodes_data = self.load_nodes()
         servers = nodes_data.get('servers', [])
-        
+
+        # 获取当前服务器IP
+        from .utils import get_current_ip
+        current_ip = get_current_ip() if exclude_current else None
+
         available = []
         for server in servers:
+            # 排除当前服务器
+            if exclude_current and server.get('ip') == current_ip:
+                self.logger.debug(f"排除当前服务器: {current_ip}")
+                continue
+
             # 排除特定状态
             if server.get('status') in exclude_status:
                 continue
-            
+
             # 检查是否过期
             try:
                 total_days = self.config['lifecycle']['total_days']
@@ -92,14 +102,14 @@ class Scanner:
                 if remaining < 0:
                     self.logger.warning(f"服务器 {server['ip']} 已过期")
                     continue
-                
+
                 # 添加剩余天数信息
                 server['remaining_days'] = remaining
                 available.append(server)
             except Exception as e:
                 self.logger.error(f"处理服务器 {server.get('ip')} 时出错: {e}")
                 continue
-        
+
         return available
     
     def select_target_server(self, current_remaining_days: int) -> Optional[Dict]:
