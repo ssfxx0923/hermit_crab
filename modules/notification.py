@@ -167,11 +167,13 @@ class ResendNotifier:
         return self.send_email(f"❌ 迁移失败 - {source_ip}", self._get_base_template("迁移失败", content, "#ef4444"))
 
     def notify_lifecycle_warning(self, server_ip: str, remaining_days: int,
-                                total_days: int, domain: Optional[str] = None) -> bool:
+                                total_days: int, domain: Optional[str] = None,
+                                available_servers_count: int = 0) -> bool:
         """生命周期警告通知"""
         info = {"服务器": server_ip, "剩余": f"{remaining_days} / {total_days} 天"}
         if domain:
             info["域名"] = domain
+        info["可用备用服务器"] = f"{available_servers_count} 台"
 
         if remaining_days <= 2:
             level, color = "🚨 紧急", "#ef4444"
@@ -180,10 +182,21 @@ class ResendNotifier:
         else:
             level, color = "ℹ️ 提醒", "#3b82f6"
 
+        # 根据可用服务器数量生成提示
+        if available_servers_count == 0:
+            alert_msg = f"{level}: ❌ 无可用服务器！请立即添加新服务器"
+            alert_color = "#ef4444"  # 红色
+        elif available_servers_count == 1:
+            alert_msg = f"{level}: ⚠️ 仅1台备用服务器，建议增加更多"
+            alert_color = "#f59e0b"  # 橙色
+        else:
+            alert_msg = f"{level}: ✅ 有 {available_servers_count} 台备用服务器可用"
+            alert_color = color
+
         content = f"""
         <p style="color:#333; margin:0 0 16px;">服务器生命周期即将结束。</p>
         {self._format_info(info)}
-        {self._alert_box(f"{level}: 请确认备用服务器已就绪", color)}
+        {self._alert_box(alert_msg, alert_color)}
         """
         return self.send_email(f"{level} 剩余 {remaining_days} 天 - {server_ip}", self._get_base_template("生命周期警告", content, color))
 

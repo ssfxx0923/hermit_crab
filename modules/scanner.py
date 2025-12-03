@@ -63,20 +63,17 @@ class Scanner:
         except Exception as e:
             self.logger.error(f"保存服务器列表失败: {e}")
     
-    def get_available_servers(self, exclude_status: List[str] = None, exclude_current: bool = True) -> List[Dict]:
+    def get_available_servers(self, only_idle: bool = True, exclude_current: bool = True) -> List[Dict]:
         """
         获取可用服务器列表
 
         Args:
-            exclude_status: 需要排除的状态列表
+            only_idle: 是否只筛选idle状态的服务器（默认True，更合理）
             exclude_current: 是否排除当前服务器（默认True）
 
         Returns:
             可用服务器列表
         """
-        if exclude_status is None:
-            exclude_status = ['transferring', 'dead']
-
         nodes_data = self.load_nodes()
         servers = nodes_data.get('servers', [])
 
@@ -91,9 +88,17 @@ class Scanner:
                 self.logger.debug(f"排除当前服务器: {current_ip}")
                 continue
 
-            # 排除特定状态
-            if server.get('status') in exclude_status:
-                continue
+            # 筛选idle状态（更合理的做法）
+            server_status = server.get('status', 'idle')
+            if only_idle:
+                if server_status != 'idle':
+                    self.logger.debug(f"跳过非idle服务器: {server['ip']} (状态: {server_status})")
+                    continue
+            else:
+                # 如果不限制只idle，则排除明确不可用的状态
+                if server_status in ['transferring', 'dead', 'active']:
+                    self.logger.debug(f"跳过不可用服务器: {server['ip']} (状态: {server_status})")
+                    continue
 
             # 检查是否过期
             try:

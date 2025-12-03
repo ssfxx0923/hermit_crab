@@ -18,7 +18,7 @@
 # ============================================
 /etc/netplan/*
 /etc/network/*
-/etc/hostname
+#/etc/hostname
 /etc/hosts
 /etc/resolv.conf
 /etc/systemd/network/*

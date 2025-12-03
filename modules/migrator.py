@@ -389,10 +389,94 @@ class Migrator:
             self.logger.info("=" * 60)
             self.logger.info("✅ 迁移完成！")
             self.logger.info("=" * 60)
-            
+
             return True
-            
+
         except Exception as e:
             self.logger.error(f"迁移过程中发生异常: {e}")
             return False
+
+    def sync_final_updates(self, target_ip: str, password: Optional[str] = None) -> bool:
+        """
+        迁移完成后，同步最新的日志和数据到新服务器
+
+        这个方法在所有迁移操作完成后调用，确保新服务器获得：
+        1. 完整的迁移日志
+        2. 更新后的 lifecycle.json（包含完整迁移历史）
+        3. 更新后的 nodes.json
+
+        Args:
+            target_ip: 目标服务器IP
+            password: SSH密码
+
+        Returns:
+            是否成功
+        """
+        self.logger.info("开始同步最新日志和数据...")
+
+        install_path = self.config['base']['install_path']
+
+        # 只同步关键的数据和日志目录，避免全盘扫描
+        sync_paths = [
+            f"{install_path}/data/",           # lifecycle.json, nodes.json 等
+            f"{install_path}/logs/",           # 所有日志文件
+            f"{install_path}/.env",            # 配置文件
+        ]
+
+        success = True
+        for path in sync_paths:
+            # 检查路径是否存在
+            if not os.path.exists(path):
+                self.logger.debug(f"跳过不存在的路径: {path}")
+                continue
+
+            # 构建 rsync 命令
+            if os.path.isdir(path):
+                # 目录需要加 /
+                src = path if path.endswith('/') else path + '/'
+                dest = f"{self.ssh_user}@{target_ip}:{path}"
+            else:
+                # 文件
+                src = path
+                dest = f"{self.ssh_user}@{target_ip}:{path}"
+
+            rsync_cmd = [
+                'rsync',
+                '-aAXvz',               # 基本选项
+                '--numeric-ids',        # 保留用户ID
+                '--delete',             # 删除目标中多余的文件
+                '-e', f'ssh -i {self.ssh_key} -o StrictHostKeyChecking=no',
+                src,
+                dest
+            ]
+
+            self.logger.info(f"同步: {path}")
+
+            try:
+                result = subprocess.run(
+                    rsync_cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=300  # 5分钟超时
+                )
+
+                if result.returncode == 0:
+                    self.logger.debug(f"✅ {path} 同步成功")
+                else:
+                    self.logger.warning(f"⚠️  {path} 同步失败: {result.stderr}")
+                    success = False
+
+            except subprocess.TimeoutExpired:
+                self.logger.error(f"❌ {path} 同步超时")
+                success = False
+            except Exception as e:
+                self.logger.error(f"❌ {path} 同步异常: {e}")
+                success = False
+
+        if success:
+            self.logger.info("✅ 所有最新数据已同步")
+        else:
+            self.logger.warning("⚠️  部分数据同步失败")
+
+        return success
 

@@ -1,14 +1,14 @@
 {
   "servers": [
     {
-      "ip": "159.65.104.203",
-      "added_date": "2025-11-22",
+      "ip": "138.197.201.72",
+      "added_date": "2025-12-02",
       "status": "active",
-      "last_heartbeat": "2025-11-22T16:22:57Z",
+      "last_heartbeat": "2025-12-02T00:31:20Z",
       "notes": "",
-      "lock_holder": "104.248.191.16",
-      "lock_time": "2025-11-22T16:21:29Z"
+      "lock_holder": "159.65.104.203",
+      "lock_time": "2025-12-02T00:23:22Z"
     }
   ],
-  "last_updated": "2025-11-24T12:09:32Z"
+  "last_updated": "2025-12-03T05:42:22Z"
 }

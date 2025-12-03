@@ -207,13 +207,19 @@ class HermitCrabAgent:
 
         self.logger.warning("🚨 需要执行迁移！")
 
-        # 发送生命周期警告通知
+        # 检查可用服务器数量
+        available_servers = self.scanner.get_available_servers()
+        available_count = len(available_servers)
+        self.logger.info(f"当前可用备用服务器数量: {available_count} 台")
+
+        # 发送生命周期警告通知（包含可用服务器数量）
         current_ip = get_current_ip()
         self.notifier.notify_lifecycle_warning(
             server_ip=current_ip,
             remaining_days=status['remaining_days'],
             total_days=self.config['lifecycle']['total_days'],
-            domain=self.config['base']['current_domain']
+            domain=self.config['base']['current_domain'],
+            available_servers_count=available_count
         )
 
         return True
@@ -396,12 +402,20 @@ class HermitCrabAgent:
             # 9. 更新DNS（如果启用）
             if self.cloudflare.is_available():
                 current_subdomain = self.config['base']['current_domain'].split('.')[0]
-                self.logger.info(f"更新DNS: {current_subdomain} -> {target_ip}")
 
+                # 更新主域名到新服务器
+                self.logger.info(f"更新主域名DNS: {current_subdomain} -> {target_ip}")
                 if self.cloudflare.update_domain_for_migration(current_subdomain, target_ip):
-                    self.logger.info("✅ DNS已更新")
+                    self.logger.info("✅ 主域名DNS已更新")
                 else:
-                    self.logger.warning("⚠️  DNS更新失败，可能需要手动更新")
+                    self.logger.warning("⚠️  主域名DNS更新失败，可能需要手动更新")
+
+                # 将旧服务器IP解析到备用域名 b.ssfxx.com
+                self.logger.info(f"更新旧服务器到备用域名: b -> {current_ip}")
+                if self.cloudflare.update_dns_record('b', current_ip):
+                    self.logger.info("✅ 旧服务器已解析到 b.ssfxx.com")
+                else:
+                    self.logger.warning("⚠️  备用域名更新失败")
 
             # 9. 更新服务器状态（即使初始化失败也要更新）
             self.logger.info("更新服务器状态...")
@@ -428,6 +442,16 @@ class HermitCrabAgent:
                 servers = [s for s in servers if s.get('ip') != current_ip]
                 nodes_data['servers'] = servers
                 self.scanner.save_nodes(nodes_data)
+
+            # 10. 再次增量同步最新的日志和数据到新服务器（保留完整迁移历史）
+            self.logger.info("=" * 60)
+            self.logger.info("同步最新日志和数据到新服务器...")
+            self.logger.info("=" * 60)
+
+            if self.migrator.sync_final_updates(target_ip, password):
+                self.logger.info("✅ 最新日志和数据已同步到新服务器")
+            else:
+                self.logger.warning("⚠️  最终同步失败，部分日志可能未同步")
 
             # 计算总耗时
             migrate_end_time = datetime.now()
@@ -580,7 +604,11 @@ class HermitCrabAgent:
                             subprocess.run(["systemctl", "disable", "hermit-crab-daemon.service"],
                                          check=False, capture_output=True)
 
-                            self.logger.info("✅ 源服务器已退役，不再执行监控任务")
+                            # 禁用邮件通知，避免退役服务器继续发送邮件
+                            self.logger.info("禁用邮件通知...")
+                            self.notifier._enabled = False
+
+                            self.logger.info("✅ 源服务器已退役，不再执行监控任务和邮件通知")
                             self.logger.info("新服务器将接管所有服务")
 
                         except Exception as e:
