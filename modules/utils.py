@@ -143,7 +143,7 @@ def get_config() -> Dict[str, Any]:
             'current_domain': get_env('HERMIT_CURRENT_DOMAIN', ''),
         },
         'lifecycle': {
-            'total_days': get_env_int('HERMIT_TOTAL_DAYS', 15),
+            'total_days': get_env_int('HERMIT_TOTAL_DAYS', 20),
             'migrate_threshold_days': get_env_int('HERMIT_MIGRATE_THRESHOLD', 5),
             'minimum_gain_days': get_env_int('HERMIT_MINIMUM_GAIN_DAYS', 1),
             'check_interval': get_env_int('HERMIT_CHECK_INTERVAL', 3600),
