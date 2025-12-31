@@ -715,20 +715,21 @@ class HermitCrabAgent:
             self.logger.error(f"❌ 停止异常: {e}")
             sys.exit(1)
 
-    def cmd_add_server(self, ip: str, notes: str = ""):
+    def cmd_add_server(self, ip: str, notes: str = "", total_days: int = None):
         """
         添加新服务器
 
         Args:
             ip: IP地址
             notes: 备注（可选）
+            total_days: 服务器生命周期天数（可选，默认使用配置值）
 
         系统会自动记录当前时间作为添加日期
         """
         self.logger.info(f"添加新服务器: {ip}")
 
         # 添加到本地（系统自动记录时间）
-        if self.scanner.add_server(ip, notes=notes):
+        if self.scanner.add_server(ip, notes=notes, total_days=total_days):
             self.logger.info("✅ 已添加到本地列表")
 
             # 同步到GitHub
@@ -742,8 +743,8 @@ class HermitCrabAgent:
             # 计算过期日期
             from datetime import datetime, timedelta
             added_date = datetime.now()
-            total_days = self.config['lifecycle']['total_days']
-            expire_date = (added_date + timedelta(days=total_days)).strftime('%Y-%m-%d')
+            actual_total_days = total_days if total_days is not None else self.config['lifecycle']['total_days']
+            expire_date = (added_date + timedelta(days=actual_total_days)).strftime('%Y-%m-%d')
 
             # 发送服务器添加通知
             self.notifier.notify_server_added(
@@ -871,6 +872,7 @@ def main():
     add_parser = subparsers.add_parser('add', help='添加新服务器（系统自动记录时间）')
     add_parser.add_argument('--ip', required=True, help='服务器IP地址')
     add_parser.add_argument('--notes', default='', help='备注信息（可选）')
+    add_parser.add_argument('--total-days', type=int, default=None, help='服务器生命周期天数（可选，默认20天）')
 
     # remove命令
     remove_parser = subparsers.add_parser('remove', help='删除服务器')
@@ -908,7 +910,7 @@ def main():
         elif args.command == 'list':
             agent.cmd_list()
         elif args.command == 'add':
-            agent.cmd_add_server(args.ip, args.notes)
+            agent.cmd_add_server(args.ip, args.notes, args.total_days)
         elif args.command == 'remove':
             agent.cmd_remove_server(args.ip)
         else:

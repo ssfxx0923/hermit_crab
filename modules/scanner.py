@@ -102,7 +102,8 @@ class Scanner:
 
             # 检查是否过期
             try:
-                total_days = self.config['lifecycle']['total_days']
+                # 优先使用服务器自己的 total_days，否则使用默认配置
+                total_days = server.get('total_days', self.config['lifecycle']['total_days'])
                 remaining = calculate_days_remaining(server['added_date'], total_days)
                 if remaining < 0:
                     self.logger.warning(f"服务器 {server['ip']} 已过期")
@@ -230,47 +231,53 @@ class Scanner:
         
         self.save_nodes(nodes_data)
     
-    def add_server(self, ip: str, status: str = "idle", notes: str = "") -> bool:
+    def add_server(self, ip: str, status: str = "idle", notes: str = "", total_days: int = None) -> bool:
         """
         添加新服务器
-        
+
         Args:
             ip: IP地址
             status: 状态
             notes: 备注（可选）
-            
+            total_days: 服务器生命周期天数（可选，默认使用配置值）
+
         Returns:
             是否成功
         """
         from .utils import format_date
-        
+
         nodes_data = self.load_nodes()
         servers = nodes_data.get('servers', [])
-        
+
         # 检查是否已存在
         for server in servers:
             if server.get('ip') == ip:
                 self.logger.warning(f"服务器已存在: {ip}")
                 return False
-        
+
         # 系统自动记录当前时间
         added_date = format_date()
-        
+
+        # 使用指定的 total_days 或默认配置
+        if total_days is None:
+            total_days = self.config['lifecycle']['total_days']
+
         # 创建新服务器记录
         new_server = {
             'ip': ip,
             'added_date': added_date,
+            'total_days': total_days,
             'status': status,
             'last_heartbeat': None,
             'notes': notes
         }
-        
+
         servers.append(new_server)
         nodes_data['servers'] = servers
-        
+
         self.save_nodes(nodes_data)
-        self.logger.info(f"已添加新服务器: {ip}")
-        
+        self.logger.info(f"已添加新服务器: {ip} (生命周期: {total_days} 天)")
+
         return True
     
     def remove_server(self, ip: str) -> bool:
@@ -323,7 +330,8 @@ class Scanner:
                 continue
 
             try:
-                total_days = self.config['lifecycle']['total_days']
+                # 优先使用服务器自己的 total_days
+                total_days = server.get('total_days', self.config['lifecycle']['total_days'])
                 remaining = calculate_days_remaining(server['added_date'], total_days)
             except:
                 remaining = -999
