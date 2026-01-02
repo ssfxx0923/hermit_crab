@@ -327,28 +327,61 @@ class Migrator:
         self.logger.info("网络配置恢复完成")
         return True
     
+    def restart_remote_sshd(self, target_ip: str, password: str) -> bool:
+        """
+        重启远程服务器的 sshd 服务
+
+        rsync 同步后 SSH 主机密钥被覆盖，需要重启 sshd 使其加载新密钥
+
+        Args:
+            target_ip: 目标服务器IP
+            password: SSH密码
+
+        Returns:
+            是否成功
+        """
+        self.logger.info(f"重启目标服务器 sshd 服务...")
+
+        # 清除本地 known_hosts 中的旧记录（主机密钥已变化）
+        run_command(f"ssh-keygen -R {target_ip} 2>/dev/null", timeout=10)
+
+        # 使用密码连接并重启 sshd
+        escaped_password = shlex.quote(password)
+        cmd = f"sshpass -p {escaped_password} ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 {self.ssh_user}@{target_ip} 'systemctl restart sshd'"
+
+        returncode, stdout, stderr = run_command(cmd, timeout=30)
+
+        if returncode == 0:
+            self.logger.info("✅ sshd 服务重启成功")
+            # 等待 sshd 完全启动
+            time.sleep(2)
+            return True
+        else:
+            self.logger.error(f"sshd 重启失败: {stderr}")
+            return False
+
     def perform_migration(self, target_ip: str, password: Optional[str] = None) -> bool:
         """
         执行完整迁移流程
-        
+
         Args:
             target_ip: 目标服务器IP
             password: SSH密码（首次连接需要）
-            
+
         Returns:
             是否成功
         """
         self.logger.info("=" * 60)
         self.logger.info(f"开始迁移到目标服务器: {target_ip}")
         self.logger.info("=" * 60)
-        
+
         try:
             # 1. 测试SSH连接
             if password:
                 if not self.test_ssh_connection(target_ip, password):
                     self.logger.error("SSH连接测试失败")
                     return False
-                
+
                 # 2. 设置SSH密钥
                 if not self.setup_ssh_key(target_ip, password):
                     self.logger.error("SSH密钥设置失败")
@@ -357,23 +390,21 @@ class Migrator:
                 if not self.test_ssh_connection(target_ip):
                     self.logger.error("SSH连接测试失败（使用密钥）")
                     return False
-            
+
             # 3. 备份目标服务器关键文件
             if not self.backup_critical_files(target_ip):
                 self.logger.error("备份关键文件失败")
                 return False
-            
+
             # 4. 执行Rsync系统同步
             if not self.rsync_system_files(target_ip):
                 self.logger.error("Rsync系统同步失败")
                 return False
 
-            # 5. 重新配置SSH密钥（rsync会覆盖authorized_keys）
+            # 5. 重启目标服务器 sshd（rsync覆盖了SSH主机密钥，需要重启使其生效）
             if password:
-                self.logger.info("重新配置SSH密钥（rsync后）...")
-                if not self.setup_ssh_key(target_ip, password):
-                    self.logger.error("重新配置SSH密钥失败")
-                    return False
+                if not self.restart_remote_sshd(target_ip, password):
+                    self.logger.warning("sshd 重启失败，尝试继续...")
 
             # 6. 恢复网络配置（传递密码作为备用）
             if not self.restore_network_config(target_ip, password):
@@ -385,7 +416,7 @@ class Migrator:
             if tar_dirs:
                 if not self.tar_stream_transfer(target_ip, tar_dirs):
                     self.logger.warning("Tar Stream传输部分失败，但继续...")
-            
+
             self.logger.info("=" * 60)
             self.logger.info("✅ 迁移完成！")
             self.logger.info("=" * 60)
@@ -417,8 +448,9 @@ class Migrator:
         install_path = self.config['base']['install_path']
 
         # 只同步关键的数据和日志目录，避免全盘扫描
+        # 注意：lifecycle.json 已在 update_lifecycle_on_target 中正确更新，不要覆盖
         sync_paths = [
-            f"{install_path}/data/",           # lifecycle.json, nodes.json 等
+            f"{install_path}/data/",           # nodes.json 等（排除 lifecycle.json）
             f"{install_path}/logs/",           # 所有日志文件
             f"{install_path}/.env",            # 配置文件
         ]
@@ -446,9 +478,14 @@ class Migrator:
                 '--numeric-ids',        # 保留用户ID
                 '--delete',             # 删除目标中多余的文件
                 '-e', f'ssh -i {self.ssh_key} -o StrictHostKeyChecking=no',
-                src,
-                dest
             ]
+
+            # 排除 lifecycle.json，因为它已在目标服务器上被正确更新
+            # 如果再次同步会用源服务器的旧 IP 覆盖目标服务器的正确 IP
+            if path == f"{install_path}/data/":
+                rsync_cmd.append('--exclude=lifecycle.json')
+
+            rsync_cmd.extend([src, dest])
 
             self.logger.info(f"同步: {path}")
 
@@ -479,4 +516,3 @@ class Migrator:
             self.logger.warning("⚠️  部分数据同步失败")
 
         return success
-

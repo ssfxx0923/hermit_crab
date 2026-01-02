@@ -1,24 +1,14 @@
 {
-  "added_date": "2025-12-02",
-  "total_days": 20,
-  "current_ip": "138.197.201.72",
+  "added_date": "2026-01-02",
+  "total_days": 43,
+  "current_ip": "188.166.179.219",
   "current_domain": "a.ssfxx.com",
-  "initialized_at": "2025-12-02T00:30:33.667303",
+  "initialized_at": "2026-01-02T07:23:14.662383",
   "migration_history": [
     {
-      "timestamp": "2025-11-22T16:13:19.151990",
-      "target_ip": "104.248.191.16",
-      "remaining_days": 4
-    },
-    {
-      "timestamp": "2025-11-22T16:22:12.209900",
-      "target_ip": "159.65.104.203",
-      "remaining_days": 14
-    },
-    {
-      "timestamp": "2025-12-02T00:30:31.761514",
-      "target_ip": "138.197.201.72",
-      "remaining_days": 4
+      "timestamp": "2026-01-02T07:23:14.662383",
+      "target_ip": "188.166.179.219",
+      "remaining_days": 7
     }
   ]
 }
